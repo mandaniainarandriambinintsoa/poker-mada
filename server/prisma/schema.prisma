@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// UTILISATEURS
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  email         String    @unique
+  passwordHash  String
+  phone         String    @unique
+  phoneVerified Boolean   @default(false)
+  avatar        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+  isActive      Boolean   @default(true)
+  isBanned      Boolean   @default(false)
+
+  wallet           Wallet?
+  transactions     Transaction[]
+  gameSessions     GameSessionPlayer[]
+  gameHistory      GameHistory[]
+  refreshTokens    RefreshToken[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+// ============================================
+// PORTEFEUILLE ET TRANSACTIONS
+// ============================================
+
+model Wallet {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance       Decimal  @default(0) @db.Decimal(15, 2)
+  frozenBalance Decimal  @default(0) @db.Decimal(15, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TABLE_BUY_IN
+  TABLE_CASH_OUT
+  WIN
+  LOSS
+  BONUS
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  ORANGE_MONEY
+  MVOLA
+  AIRTEL_MONEY
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id])
+  type            TransactionType
+  amount          Decimal           @db.Decimal(15, 2)
+  balanceBefore   Decimal           @db.Decimal(15, 2)
+  balanceAfter    Decimal           @db.Decimal(15, 2)
+  status          TransactionStatus @default(PENDING)
+  paymentProvider PaymentProvider?
+  externalRef     String?
+  phoneNumber     String?
+  description     String?
+  metadata        Json?
+  gameSessionId   String?
+  gameSession     GameSession?      @relation(fields: [gameSessionId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  completedAt     DateTime?
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([externalRef])
+}
+
+// ============================================
+// CONFIGURATION DES TABLES
+// ============================================
+
+enum TableTier {
+  SMALL
+  MEDIUM
+  HIGH
+}
+
+model TableConfig {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  tier        TableTier
+  minBuyIn    Decimal  @db.Decimal(15, 2)
+  maxBuyIn    Decimal  @db.Decimal(15, 2)
+  smallBlind  Decimal  @db.Decimal(15, 2)
+  bigBlind    Decimal  @db.Decimal(15, 2)
+  maxPlayers  Int      @default(9)
+  minPlayers  Int      @default(2)
+  turnTimeout Int      @default(30)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  gameSessions GameSession[]
+}
+
+// ============================================
+// SESSIONS DE JEU
+// ============================================
+
+enum GameSessionStatus {
+  WAITING
+  RUNNING
+  PAUSED
+  FINISHED
+}
+
+model GameSession {
+  id             String            @id @default(uuid())
+  tableConfigId  String
+  tableConfig    TableConfig       @relation(fields: [tableConfigId], references: [id])
+  status         GameSessionStatus @default(WAITING)
+  gameState      Json?
+  currentHandNum Int               @default(0)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  players      GameSessionPlayer[]
+  transactions Transaction[]
+  gameHistory  GameHistory[]
+
+  @@index([status])
+  @@index([tableConfigId])
+}
+
+model GameSessionPlayer {
+  id            String      @id @default(uuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  seatNumber    Int
+  chipStack     Decimal     @db.Decimal(15, 2)
+  isActive      Boolean     @default(true)
+  isSittingOut  Boolean     @default(false)
+  joinedAt      DateTime    @default(now())
+  leftAt        DateTime?
+
+  @@unique([gameSessionId, seatNumber])
+  @@unique([gameSessionId, userId])
+  @@index([userId])
+}
+
+// ============================================
+// HISTORIQUE DES MAINS
+// ============================================
+
+model GameHistory {
+  id             String      @id @default(uuid())
+  gameSessionId  String
+  gameSession    GameSession @relation(fields: [gameSessionId], references: [id])
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  handNumber     Int
+  holeCards      String[]
+  finalHand      String?
+  amountWon      Decimal     @default(0) @db.Decimal(15, 2)
+  amountLost     Decimal     @default(0) @db.Decimal(15, 2)
+  actions        Json
+  communityCards String[]
+  isWinner       Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+
+  @@index([userId])
+  @@index([gameSessionId])
+  @@index([createdAt])
+}

@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-white font-sans;
+    min-height: 100vh;
+  }
+
+  * {
+    @apply box-border;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply bg-poker-gold text-black hover:bg-yellow-500 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-700 text-white hover:bg-gray-600 active:scale-95;
+  }
+
+  .btn-danger {
+    @apply bg-poker-red text-white hover:bg-red-700 active:scale-95;
+  }
+
+  .btn-success {
+    @apply bg-green-600 text-white hover:bg-green-500 active:scale-95;
+  }
+
+  .input {
+    @apply w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-poker-gold transition-colors;
+  }
+
+  .card {
+    @apply bg-gray-800 rounded-xl p-6 shadow-lg;
+  }
+}
+
+/* Poker Table Styles */
+.poker-table {
+  background: radial-gradient(ellipse at center, #35654d 0%, #1a472a 70%, #0f2b1a 100%);
+  border: 12px solid #5a3825;
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Card Styles */
+.playing-card {
+  @apply relative bg-white rounded-lg shadow-lg;
+  aspect-ratio: 2.5 / 3.5;
+  font-family: 'Times New Roman', serif;
+}
+
+.playing-card.hearts,
+.playing-card.diamonds {
+  @apply text-red-600;
+}
+
+.playing-card.clubs,
+.playing-card.spades {
+  @apply text-gray-900;
+}
+
+.playing-card.face-down {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #1e3a8a 100%);
+  background-size: 10px 10px;
+}
+
+/* Chip Stack */
+.chip {
+  @apply rounded-full border-4 border-dashed;
+  width: 40px;
+  height: 40px;
+}
+
+.chip-white {
+  @apply bg-white border-gray-300;
+}
+
+.chip-red {
+  @apply bg-red-600 border-red-400;
+}
+
+.chip-blue {
+  @apply bg-blue-600 border-blue-400;
+}
+
+.chip-green {
+  @apply bg-green-600 border-green-400;
+}
+
+.chip-black {
+  @apply bg-gray-900 border-gray-600;
+}
+
+/* Timer Animation */
+@keyframes timerPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.timer-warning {
+  animation: timerPulse 0.5s ease-in-out infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
