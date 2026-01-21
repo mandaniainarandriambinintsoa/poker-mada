@@ -1,5 +1,5 @@
 import { Card, RANK_VALUES } from './Card';
-import { HandRank, EvaluatedHand } from '../../../shared/types/game';
+import { HandRank, EvaluatedHand } from '../shared/types/game';
 
 interface CardGroup {
   rank: string;

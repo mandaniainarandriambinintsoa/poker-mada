@@ -1,4 +1,4 @@
-import { Pot as PotType } from '../../../shared/types/game';
+import { Pot as PotType } from '../shared/types/game';
 import { HandEvaluator } from './HandEvaluator';
 import { Card } from './Card';
 

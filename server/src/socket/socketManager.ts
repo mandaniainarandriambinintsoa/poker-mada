@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/env';
 import { prisma } from '../config/database';
 import { PokerTable } from '../game/Table';
-import { TABLE_CONFIGS } from '../../../shared/constants/tables';
+import { TABLE_CONFIGS } from '../shared/constants/tables';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;

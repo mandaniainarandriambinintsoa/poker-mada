@@ -1,4 +1,4 @@
-import { GameState, GamePhase, PlayerAction, TablePlayer, Card as CardType } from '../../../shared/types/game';
+import { GameState, GamePhase, PlayerAction, TablePlayer, Card as CardType } from '../shared/types/game';
 import { Card } from './Card';
 import { Deck } from './Deck';
 import { PotManager } from './Pot';
