@@ -11,6 +11,12 @@ datasource db {
 // UTILISATEURS
 // ============================================
 
+enum UserRole {
+  PLAYER
+  ADMIN
+  SUPER_ADMIN
+}
+
 model User {
   id            String    @id @default(uuid())
   username      String    @unique
@@ -19,6 +25,7 @@ model User {
   phone         String    @unique
   phoneVerified Boolean   @default(false)
   avatar        String?
+  role          UserRole  @default(PLAYER)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   lastLoginAt   DateTime?
@@ -30,6 +37,7 @@ model User {
   gameSessions     GameSessionPlayer[]
   gameHistory      GameHistory[]
   refreshTokens    RefreshToken[]
+  adminAuditLogs   AdminAuditLog[]
 
   @@index([email])
   @@index([phone])
@@ -214,5 +222,24 @@ model GameHistory {
 
   @@index([userId])
   @@index([gameSessionId])
+  @@index([createdAt])
+}
+
+// ============================================
+// JOURNAL DES ACTIONS ADMIN
+// ============================================
+
+model AdminAuditLog {
+  id          String   @id @default(uuid())
+  adminId     String
+  admin       User     @relation(fields: [adminId], references: [id])
+  action      String   // "ADJUST_BALANCE", "BAN_USER", "UNBAN_USER", "COMPLETE_TRANSACTION", "FAIL_TRANSACTION"
+  targetType  String   // "USER", "TRANSACTION", "WALLET"
+  targetId    String
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
   @@index([createdAt])
 }

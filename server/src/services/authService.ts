@@ -18,6 +18,7 @@ interface UserData {
   email: string;
   phone: string;
   avatar: string | null;
+  role: string;
   createdAt: Date;
 }
 
@@ -49,7 +50,9 @@ export class AuthService {
     // Hasher le mot de passe
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    // Créer l'utilisateur et son portefeuille
+    // Créer l'utilisateur et son portefeuille avec jetons de départ
+    const STARTING_BALANCE = 10000; // Jetons de départ gratuits
+
     const user = await prisma.user.create({
       data: {
         username,
@@ -58,7 +61,7 @@ export class AuthService {
         phone,
         wallet: {
           create: {
-            balance: 0,
+            balance: STARTING_BALANCE,
             frozenBalance: 0,
           },
         },
@@ -69,6 +72,7 @@ export class AuthService {
         email: true,
         phone: true,
         avatar: true,
+        role: true,
         createdAt: true,
       },
     });
@@ -89,6 +93,7 @@ export class AuthService {
         email: true,
         phone: true,
         avatar: true,
+        role: true,
         createdAt: true,
         passwordHash: true,
         isActive: true,
@@ -163,6 +168,90 @@ export class AuthService {
         where: { userId },
       });
     }
+  }
+
+  async updateProfile(
+    userId: string,
+    data: { username?: string; email?: string; phone?: string }
+  ): Promise<UserData> {
+    // Vérifier les unicités si les champs sont fournis
+    if (data.username) {
+      const existingUsername = await prisma.user.findFirst({
+        where: { username: data.username, NOT: { id: userId } },
+      });
+      if (existingUsername) {
+        throw new AppError("Ce nom d'utilisateur est déjà pris", 409, 'USERNAME_EXISTS');
+      }
+    }
+
+    if (data.email) {
+      const existingEmail = await prisma.user.findFirst({
+        where: { email: data.email, NOT: { id: userId } },
+      });
+      if (existingEmail) {
+        throw new AppError('Cet email est déjà utilisé', 409, 'EMAIL_EXISTS');
+      }
+    }
+
+    if (data.phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: { phone: data.phone, NOT: { id: userId } },
+      });
+      if (existingPhone) {
+        throw new AppError('Ce numéro de téléphone est déjà utilisé', 409, 'PHONE_EXISTS');
+      }
+    }
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(data.username && { username: data.username }),
+        ...(data.email && { email: data.email }),
+        ...(data.phone && { phone: data.phone }),
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    return user;
+  }
+
+  async updatePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<void> {
+    // Récupérer l'utilisateur avec le hash du mot de passe
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+
+    if (!user) {
+      throw new AppError('Utilisateur non trouvé', 404, 'USER_NOT_FOUND');
+    }
+
+    // Vérifier le mot de passe actuel
+    const isValidPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isValidPassword) {
+      throw new AppError('Mot de passe actuel incorrect', 401, 'INVALID_PASSWORD');
+    }
+
+    // Hasher le nouveau mot de passe
+    const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    // Mettre à jour le mot de passe
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
   }
 
   private async generateTokens(userId: string, email: string): Promise<TokenPair> {

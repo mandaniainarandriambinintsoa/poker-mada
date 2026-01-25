@@ -10,6 +10,13 @@ import LobbyPage from './pages/LobbyPage';
 import GamePage from './pages/GamePage';
 import WalletPage from './pages/WalletPage';
 
+// Admin Pages
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
+import AdminPendingPage from './pages/admin/AdminPendingPage';
+import AdminTransactionsPage from './pages/admin/AdminTransactionsPage';
+import { AdminRoute } from './components/admin/AdminRoute';
+
 // Route protégée
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -92,6 +99,40 @@ function AppRoutes() {
           <ProtectedRoute>
             <WalletPage />
           </ProtectedRoute>
+        }
+      />
+
+      {/* Routes admin */}
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminDashboardPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/users"
+        element={
+          <AdminRoute>
+            <AdminUsersPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/pending"
+        element={
+          <AdminRoute>
+            <AdminPendingPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/transactions"
+        element={
+          <AdminRoute>
+            <AdminTransactionsPage />
+          </AdminRoute>
         }
       />
 

@@ -7,12 +7,15 @@ interface User {
   email: string;
   phone: string;
   avatar?: string;
+  role: 'PLAYER' | 'ADMIN' | 'SUPER_ADMIN';
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, phone: string) => Promise<void>;
   logout: () => void;
@@ -98,12 +101,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearError = () => setError(null);
 
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
         isAuthenticated: !!user,
+        isAdmin,
+        isSuperAdmin,
         login,
         register,
         logout,
