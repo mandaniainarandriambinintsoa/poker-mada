@@ -95,3 +95,40 @@ UPDATE "User" SET role = 'SUPER_ADMIN' WHERE email = 'votre-email@example.com';
 - URL: `/admin`
 - Nécessite un compte avec rôle ADMIN ou SUPER_ADMIN
 - Lien visible dans le header pour les admins
+
+---
+
+## Réconciliation des Balances Gelées
+
+### Problème résolu
+Quand un joueur rejoint une table, son buy-in est "gelé" (frozenBalance). Si le serveur crash ou si la déconnexion n'est pas gérée correctement, la balance peut rester gelée même si le joueur n'est plus sur aucune table.
+
+### Solution automatique
+Le service de réconciliation (`server/src/services/reconciliationService.ts`):
+- S'exécute automatiquement au démarrage du serveur
+- S'exécute toutes les 5 minutes
+- Vérifie tous les utilisateurs avec frozenBalance > 0
+- Si le joueur n'est sur aucune table active, libère automatiquement la balance
+- Crée une transaction REFUND pour tracer
+- Log l'action dans AdminAuditLog
+
+### Réconciliation manuelle
+Dans le dashboard admin (`/admin`), les SUPER_ADMIN peuvent:
+- Voir le bouton "Lancer la réconciliation"
+- Déclencher manuellement la vérification
+- Voir le résultat (nombre vérifié, nombre corrigé, détails)
+
+### Endpoint API
+```
+POST /api/admin/reconcile
+```
+Réservé aux SUPER_ADMIN. Retourne:
+```json
+{
+  "checked": 5,
+  "corrected": 1,
+  "details": [
+    { "odId": "...", "username": "player1", "amount": 5000 }
+  ]
+}
+```

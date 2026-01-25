@@ -166,6 +166,22 @@ export class AdminController {
       next(error);
     }
   }
+
+  // ============================================
+  // RECONCILIATION
+  // ============================================
+
+  async runReconciliation(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await adminService.runReconciliation();
+      res.json({
+        message: `Réconciliation terminée: ${result.corrected} correction(s)`,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminController = new AdminController();

@@ -4,11 +4,19 @@ import { useAuth } from '../../contexts/AuthContext';
 import { adminApi, DashboardStats } from '../../services/adminApi';
 import { getErrorMessage } from '../../services/api';
 
+interface ReconciliationResult {
+  checked: number;
+  corrected: number;
+  details: Array<{ odId: string; username: string; amount: number }>;
+}
+
 export default function AdminDashboardPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, isSuperAdmin } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
 
   useEffect(() => {
     loadStats();
@@ -31,6 +39,23 @@ export default function AdminDashboardPage() {
       style: 'decimal',
       minimumFractionDigits: 0,
     }).format(amount) + ' Ar';
+  };
+
+  const handleReconciliation = async () => {
+    try {
+      setReconciling(true);
+      setReconciliationResult(null);
+      const result = await adminApi.runReconciliation();
+      setReconciliationResult(result);
+      // Recharger les stats si des corrections ont été faites
+      if (result.corrected > 0) {
+        loadStats();
+      }
+    } catch (err) {
+      alert(getErrorMessage(err));
+    } finally {
+      setReconciling(false);
+    }
   };
 
   return (
@@ -192,6 +217,55 @@ export default function AdminDashboardPage() {
             </p>
           </Link>
         </div>
+
+        {/* Reconciliation Section - Super Admin Only */}
+        {isSuperAdmin && (
+          <div className="mt-8 bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-medium text-white">Reconciliation des Balances Gelees</h3>
+                <p className="text-gray-400 text-sm mt-1">
+                  Verifie et libere les balances gelees orphelines (joueurs qui ne sont plus sur une table)
+                </p>
+              </div>
+              <button
+                onClick={handleReconciliation}
+                disabled={reconciling}
+                className="px-6 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+              >
+                {reconciling ? 'Verification...' : 'Lancer la reconciliation'}
+              </button>
+            </div>
+
+            {reconciliationResult && (
+              <div className={`mt-4 p-4 rounded-lg ${
+                reconciliationResult.corrected > 0 ? 'bg-green-900/30 border border-green-700' : 'bg-gray-700/50'
+              }`}>
+                <p className="text-white">
+                  <span className="font-medium">{reconciliationResult.checked}</span> utilisateur(s) verifie(s),{' '}
+                  <span className={`font-medium ${reconciliationResult.corrected > 0 ? 'text-green-400' : ''}`}>
+                    {reconciliationResult.corrected}
+                  </span> correction(s) effectuee(s)
+                </p>
+
+                {reconciliationResult.details.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-sm text-gray-400">Details des corrections:</p>
+                    {reconciliationResult.details.map((detail, i) => (
+                      <div key={i} className="text-sm text-green-400">
+                        {detail.username}: {formatMoney(detail.amount)} libere
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <p className="text-xs text-gray-500 mt-4">
+              Note: La reconciliation automatique s'execute toutes les 5 minutes au demarrage du serveur.
+            </p>
+          </div>
+        )}
       </main>
     </div>
   );

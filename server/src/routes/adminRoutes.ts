@@ -86,4 +86,11 @@ router.post(
 // GET /api/admin/audit-logs - Journal des actions admin
 router.get('/audit-logs', requireSuperAdmin, adminController.getAuditLogs.bind(adminController));
 
+// ============================================
+// RECONCILIATION
+// ============================================
+
+// POST /api/admin/reconcile - Lancer la réconciliation des balances gelées
+router.post('/reconcile', requireSuperAdmin, adminController.runReconciliation.bind(adminController));
+
 export default router;

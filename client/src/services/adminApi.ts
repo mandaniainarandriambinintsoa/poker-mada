@@ -161,4 +161,14 @@ export const adminApi = {
     const response = await api.get('/admin/audit-logs', { params });
     return response.data;
   },
+
+  // Reconciliation
+  runReconciliation: async (): Promise<{
+    checked: number;
+    corrected: number;
+    details: Array<{ odId: string; username: string; amount: number }>;
+  }> => {
+    const response = await api.post('/admin/reconcile');
+    return response.data;
+  },
 };

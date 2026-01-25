@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
+import { reconcileFrozenBalances } from './reconciliationService';
 
 export class AdminService {
   // ============================================
@@ -641,6 +642,15 @@ export class AdminService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  // ============================================
+  // RECONCILIATION
+  // ============================================
+
+  async runReconciliation() {
+    const result = await reconcileFrozenBalances();
+    return result;
   }
 }
 
