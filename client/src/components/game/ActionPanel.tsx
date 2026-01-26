@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 
 type PlayerAction = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
 
@@ -39,6 +39,21 @@ export default function ActionPanel({
   const [raiseAmount, setRaiseAmount] = useState(minRaise);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const callAmount = currentBet - myCurrentBet;
+
+  // Prevent double actions from touch + click events
+  const lastActionTime = useRef(0);
+  const ACTION_DEBOUNCE_MS = 300;
+
+  const handleAction = useCallback((action: PlayerAction, amount?: number) => {
+    const now = Date.now();
+    if (now - lastActionTime.current < ACTION_DEBOUNCE_MS) {
+      console.log('[ActionPanel] Debounced duplicate action:', action);
+      return;
+    }
+    lastActionTime.current = now;
+    console.log('[ActionPanel] Executing action:', action, amount);
+    onAction(action, amount);
+  }, [onAction]);
 
   const canCheck = availableActions.includes('check');
   const canCall = availableActions.includes('call');
@@ -87,8 +102,8 @@ export default function ActionPanel({
         <div className="bg-gray-800 rounded-xl p-3 flex gap-2">
           {/* Fold */}
           <button
-            onClick={() => onAction('fold')}
-            onTouchEnd={(e) => { e.preventDefault(); onAction('fold'); }}
+            onClick={() => handleAction('fold')}
+            onTouchEnd={(e) => { e.preventDefault(); handleAction('fold'); }}
             className="btn bg-red-600 hover:bg-red-500 active:bg-red-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
           >
             Fold
@@ -97,16 +112,16 @@ export default function ActionPanel({
           {/* Check ou Call */}
           {canCheck ? (
             <button
-              onClick={() => onAction('check')}
-              onTouchEnd={(e) => { e.preventDefault(); onAction('check'); }}
+              onClick={() => handleAction('check')}
+              onTouchEnd={(e) => { e.preventDefault(); handleAction('check'); }}
               className="btn bg-green-600 hover:bg-green-500 active:bg-green-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
             >
               Check
             </button>
           ) : canCall ? (
             <button
-              onClick={() => onAction('call')}
-              onTouchEnd={(e) => { e.preventDefault(); onAction('call'); }}
+              onClick={() => handleAction('call')}
+              onTouchEnd={(e) => { e.preventDefault(); handleAction('call'); }}
               className="btn bg-green-600 hover:bg-green-500 active:bg-green-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
             >
               Call {formatAriary(callAmount, true)}
@@ -120,12 +135,12 @@ export default function ActionPanel({
             showRaisePanel ? (
               <button
                 onClick={() => {
-                  onAction('raise', raiseAmount);
+                  handleAction('raise', raiseAmount);
                   setShowRaisePanel(false);
                 }}
                 onTouchEnd={(e) => {
                   e.preventDefault();
-                  onAction('raise', raiseAmount);
+                  handleAction('raise', raiseAmount);
                   setShowRaisePanel(false);
                 }}
                 className="btn bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
@@ -145,8 +160,8 @@ export default function ActionPanel({
 
           {/* All-In */}
           <button
-            onClick={() => onAction('all-in')}
-            onTouchEnd={(e) => { e.preventDefault(); onAction('all-in'); }}
+            onClick={() => handleAction('all-in')}
+            onTouchEnd={(e) => { e.preventDefault(); handleAction('all-in'); }}
             className="btn bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
           >
             All-In
@@ -162,7 +177,7 @@ export default function ActionPanel({
       <div className="flex flex-wrap gap-3 justify-center">
         {/* Fold */}
         <button
-          onClick={() => onAction('fold')}
+          onClick={() => handleAction('fold')}
           className="btn bg-red-600 hover:bg-red-500 text-white px-6 py-3"
         >
           Fold
@@ -171,14 +186,14 @@ export default function ActionPanel({
         {/* Check ou Call */}
         {canCheck ? (
           <button
-            onClick={() => onAction('check')}
+            onClick={() => handleAction('check')}
             className="btn bg-green-600 hover:bg-green-500 text-white px-6 py-3"
           >
             Check
           </button>
         ) : canCall ? (
           <button
-            onClick={() => onAction('call')}
+            onClick={() => handleAction('call')}
             className="btn bg-green-600 hover:bg-green-500 text-white px-6 py-3"
           >
             Call {formatAriary(callAmount)}
@@ -211,7 +226,7 @@ export default function ActionPanel({
               />
             </div>
             <button
-              onClick={() => onAction('raise', raiseAmount)}
+              onClick={() => handleAction('raise', raiseAmount)}
               className="btn bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-3"
             >
               Raise {formatAriary(raiseAmount)}
@@ -221,7 +236,7 @@ export default function ActionPanel({
 
         {/* All-In */}
         <button
-          onClick={() => onAction('all-in')}
+          onClick={() => handleAction('all-in')}
           className="btn bg-purple-600 hover:bg-purple-500 text-white px-6 py-3"
         >
           All-In ({formatAriary(myStack)})

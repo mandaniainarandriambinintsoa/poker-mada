@@ -323,6 +323,18 @@ export default function GamePage() {
   const myPlayer = gameState?.players.find((p) => p.odId === user?.id);
   const isMyTurn = gameState?.currentPlayerId === user?.id;
 
+  // Debug logging for turn detection
+  if (gameState && user) {
+    console.log('[GamePage] Turn check:', {
+      userId: user.id,
+      currentPlayerId: gameState.currentPlayerId,
+      isMyTurn,
+      myPlayerFound: !!myPlayer,
+      availableActions: gameState.availableActions,
+      phase: gameState.phase,
+    });
+  }
+
   if (!gameState) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
