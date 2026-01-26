@@ -120,10 +120,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
 
     try {
+      // Extraire les tokens depuis l'URL hash (format Supabase OAuth)
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+
+      if (accessToken) {
+        // Tokens trouvés dans l'URL - les utiliser directement
+        const response = await api.post('/auth/google/callback', {
+          access_token: accessToken,
+        });
+
+        const { user, token, refreshToken } = response.data;
+
+        localStorage.setItem('token', token);
+        localStorage.setItem('refreshToken', refreshToken);
+        setUser(user);
+
+        // Nettoyer l'URL
+        window.history.replaceState(null, '', window.location.pathname);
+        return;
+      }
+
+      // Sinon, essayer de récupérer la session existante
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       if (sessionError || !session) {
-        throw new Error('Session Google invalide');
+        throw new Error('Session Google invalide. Veuillez réessayer.');
       }
 
       // Envoyer le token au backend pour créer/lier le compte
