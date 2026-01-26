@@ -132,8 +132,8 @@ export function initializeSocketManager(io: Server): void {
     console.log(`User connected: ${socket.username} (${socket.userId})`);
 
     // Vérifier si c'est une reconnexion (joueur déjà à une table)
-    const existingTableId = playerTables.get(socket.userId!);
-    const isReconnecting = !!existingTableId;
+    let existingTableId = playerTables.get(socket.userId!);
+    let isReconnecting = !!existingTableId;
 
     // Annuler tout timer de déconnexion en cours pour ce joueur (reconnexion)
     const existingTimer = disconnectTimers.get(socket.userId!);
@@ -143,7 +143,29 @@ export function initializeSocketManager(io: Server): void {
       console.log(`[RECONNECT] Cancelled disconnect timer for ${socket.username}`);
     }
 
-    // Si le joueur était à une table, le remettre dans la room socket
+    // Si le joueur était à une table, vérifier qu'il y est vraiment encore
+    if (existingTableId) {
+      const table = activeTables.get(existingTableId);
+      if (table) {
+        const state = table.getState();
+        const playerInTable = state.players.find(p => p.odId === socket.userId);
+        if (!playerInTable) {
+          // Le joueur a été exclu de la table mais playerTables n'a pas été nettoyé
+          console.log(`[RECONNECT] ${socket.username} was in playerTables but not in actual table, cleaning up`);
+          playerTables.delete(socket.userId!);
+          existingTableId = undefined;
+          isReconnecting = false;
+        }
+      } else {
+        // La table n'existe plus
+        console.log(`[RECONNECT] Table ${existingTableId} no longer exists, cleaning up`);
+        playerTables.delete(socket.userId!);
+        existingTableId = undefined;
+        isReconnecting = false;
+      }
+    }
+
+    // Si le joueur était à une table (et y est vraiment), le remettre dans la room socket
     if (existingTableId) {
       socket.join(`table:${existingTableId}`);
       console.log(`[RECONNECT] ${socket.username} rejoined table room ${existingTableId}`);
@@ -200,11 +222,27 @@ export function initializeSocketManager(io: Server): void {
       socket.join('lobby');
 
       // Vérifier si le joueur est déjà à une table
-      const existingTableId = playerTables.get(socket.userId!);
+      let existingTableId = playerTables.get(socket.userId!);
       if (existingTableId) {
-        console.log(`[LOBBY] ${socket.username} is already at table ${existingTableId}, redirecting`);
-        socket.emit('player:already-at-table', { tableId: existingTableId });
-        return;
+        // Vérifier que le joueur est vraiment dans la table
+        const table = activeTables.get(existingTableId);
+        if (table) {
+          const state = table.getState();
+          const playerInTable = state.players.find(p => p.odId === socket.userId);
+          if (playerInTable) {
+            console.log(`[LOBBY] ${socket.username} is already at table ${existingTableId}, redirecting`);
+            socket.emit('player:already-at-table', { tableId: existingTableId });
+            return;
+          } else {
+            // Le joueur a été exclu, nettoyer
+            console.log(`[LOBBY] ${socket.username} was in playerTables but not in table, cleaning up`);
+            playerTables.delete(socket.userId!);
+          }
+        } else {
+          // La table n'existe plus
+          console.log(`[LOBBY] Table ${existingTableId} no longer exists, cleaning up`);
+          playerTables.delete(socket.userId!);
+        }
       }
 
       emitTablesUpdate(socket);
@@ -768,10 +806,22 @@ function handleGetTableState(
     return;
   }
 
-  // Vérifier si le joueur est à cette table
+  // Vérifier si le joueur est à cette table (dans playerTables)
   const currentTableId = playerTables.get(userId);
   if (currentTableId !== tableId) {
     socket.emit('table:error', { message: 'Vous n\'êtes pas à cette table', code: 'NOT_AT_TABLE' });
+    return;
+  }
+
+  // Vérifier que le joueur est vraiment dans la table (pas exclu)
+  const state = table.getState();
+  const playerInTable = state.players.find(p => p.odId === userId);
+  if (!playerInTable) {
+    // Le joueur a été exclu, nettoyer et rediriger
+    console.log(`[TABLE:GET-STATE] ${socket.username} was in playerTables but not in table, cleaning up`);
+    playerTables.delete(userId);
+    socket.emit('table:error', { message: 'Vous avez été exclu de cette table', code: 'EXCLUDED_FROM_TABLE' });
+    socket.emit('table:left', { tableId });
     return;
   }
 
