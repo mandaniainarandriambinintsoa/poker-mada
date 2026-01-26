@@ -169,6 +169,16 @@ export function initializeSocketManager(io: Server): void {
     if (existingTableId) {
       socket.join(`table:${existingTableId}`);
       console.log(`[RECONNECT] ${socket.username} rejoined table room ${existingTableId}`);
+
+      // Redémarrer le timer si c'est le tour de ce joueur
+      const table = activeTables.get(existingTableId);
+      if (table) {
+        const state = table.getState();
+        if (state.currentPlayerId === socket.userId && !botManager.isBot(socket.userId!)) {
+          console.log(`[RECONNECT] Restarting timer for ${socket.username} (it's their turn)`);
+          startTurnTimerForCurrentPlayer(table, existingTableId);
+        }
+      }
     }
 
     // === Chat Global: Ajouter l'utilisateur en ligne ===
@@ -830,6 +840,12 @@ function handleGetTableState(
     tableId,
     gameState: table.getState(userId),
   });
+
+  // Si c'est le tour de ce joueur, s'assurer que le timer est actif
+  if (state.currentPlayerId === userId && !botManager.isBot(userId)) {
+    console.log(`[TABLE:GET-STATE] Ensuring timer is running for ${socket.username}`);
+    startTurnTimerForCurrentPlayer(table, tableId);
+  }
 }
 
 function handleChatMessage(
