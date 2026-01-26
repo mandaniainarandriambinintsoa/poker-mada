@@ -120,37 +120,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
 
     try {
-      // Extraire les tokens depuis l'URL hash (format Supabase OAuth)
+      // Méthode 1: Extraire les tokens depuis l'URL hash (ancien format)
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
+      let accessToken = hashParams.get('access_token');
 
-      if (accessToken) {
-        // Tokens trouvés dans l'URL - les utiliser directement
-        const response = await api.post('/auth/google/callback', {
-          access_token: accessToken,
-        });
+      // Méthode 2: Si pas de token dans le hash, vérifier les query params (PKCE flow)
+      if (!accessToken) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
 
-        const { user, token, refreshToken } = response.data;
+        if (code) {
+          // Échanger le code contre une session
+          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
-        localStorage.setItem('token', token);
-        localStorage.setItem('refreshToken', refreshToken);
-        setUser(user);
+          if (exchangeError || !data.session) {
+            throw new Error('Erreur lors de l\'échange du code: ' + (exchangeError?.message || 'Session invalide'));
+          }
 
-        // Nettoyer l'URL
-        window.history.replaceState(null, '', window.location.pathname);
-        return;
+          accessToken = data.session.access_token;
+        }
       }
 
-      // Sinon, essayer de récupérer la session existante
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      // Méthode 3: Essayer de récupérer la session existante
+      if (!accessToken) {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-      if (sessionError || !session) {
-        throw new Error('Session Google invalide. Veuillez réessayer.');
+        if (!sessionError && session) {
+          accessToken = session.access_token;
+        }
+      }
+
+      if (!accessToken) {
+        throw new Error('Impossible de récupérer le token Google. Veuillez réessayer.');
       }
 
       // Envoyer le token au backend pour créer/lier le compte
       const response = await api.post('/auth/google/callback', {
-        access_token: session.access_token,
+        access_token: accessToken,
       });
 
       const { user, token, refreshToken } = response.data;
@@ -158,6 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('token', token);
       localStorage.setItem('refreshToken', refreshToken);
       setUser(user);
+
+      // Nettoyer l'URL
+      window.history.replaceState(null, '', window.location.pathname);
     } catch (err) {
       const message = getErrorMessage(err);
       setError(message);
