@@ -84,11 +84,12 @@ export default function ActionPanel({
         )}
 
         {/* Boutons d'action principaux */}
-        <div className="bg-gray-800 rounded-xl p-2 flex gap-2">
+        <div className="bg-gray-800 rounded-xl p-3 flex gap-2">
           {/* Fold */}
           <button
             onClick={() => onAction('fold')}
-            className="btn bg-red-600 hover:bg-red-500 text-white px-3 py-2 text-sm flex-1"
+            onTouchEnd={(e) => { e.preventDefault(); onAction('fold'); }}
+            className="btn bg-red-600 hover:bg-red-500 active:bg-red-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
           >
             Fold
           </button>
@@ -97,14 +98,16 @@ export default function ActionPanel({
           {canCheck ? (
             <button
               onClick={() => onAction('check')}
-              className="btn bg-green-600 hover:bg-green-500 text-white px-3 py-2 text-sm flex-1"
+              onTouchEnd={(e) => { e.preventDefault(); onAction('check'); }}
+              className="btn bg-green-600 hover:bg-green-500 active:bg-green-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
             >
               Check
             </button>
           ) : canCall ? (
             <button
               onClick={() => onAction('call')}
-              className="btn bg-green-600 hover:bg-green-500 text-white px-3 py-2 text-sm flex-1"
+              onTouchEnd={(e) => { e.preventDefault(); onAction('call'); }}
+              className="btn bg-green-600 hover:bg-green-500 active:bg-green-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
             >
               Call {formatAriary(callAmount, true)}
             </button>
@@ -120,14 +123,20 @@ export default function ActionPanel({
                   onAction('raise', raiseAmount);
                   setShowRaisePanel(false);
                 }}
-                className="btn bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-2 text-sm flex-1"
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  onAction('raise', raiseAmount);
+                  setShowRaisePanel(false);
+                }}
+                className="btn bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
               >
                 Raise {formatAriary(raiseAmount, true)}
               </button>
             ) : (
               <button
                 onClick={() => setShowRaisePanel(true)}
-                className="btn bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-2 text-sm flex-1"
+                onTouchEnd={(e) => { e.preventDefault(); setShowRaisePanel(true); }}
+                className="btn bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
               >
                 Raise
               </button>
@@ -137,7 +146,8 @@ export default function ActionPanel({
           {/* All-In */}
           <button
             onClick={() => onAction('all-in')}
-            className="btn bg-purple-600 hover:bg-purple-500 text-white px-3 py-2 text-sm flex-1"
+            onTouchEnd={(e) => { e.preventDefault(); onAction('all-in'); }}
+            className="btn bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white px-4 py-3 text-base font-bold flex-1 min-h-[48px]"
           >
             All-In
           </button>
