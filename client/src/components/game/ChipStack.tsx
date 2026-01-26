@@ -8,23 +8,25 @@ interface ChipStackProps {
   animate?: boolean;
 }
 
-// Définition des valeurs et couleurs des jetons
+// Définition des valeurs et couleurs des jetons - design amélioré
 const CHIP_VALUES = [
-  { value: 10000, color: 'bg-gray-900 border-gray-600', label: '10k' },
-  { value: 5000, color: 'bg-blue-700 border-blue-400', label: '5k' },
-  { value: 1000, color: 'bg-green-600 border-green-400', label: '1k' },
-  { value: 500, color: 'bg-red-600 border-red-400', label: '500' },
-  { value: 100, color: 'bg-white border-gray-300 text-gray-800', label: '100' },
+  { value: 10000, bgColor: '#1a1a2e', borderColor: '#4a4a6a', innerColor: '#2d2d4a', label: '10k' },
+  { value: 5000, bgColor: '#1e3a5f', borderColor: '#3d7ab8', innerColor: '#2a5080', label: '5k' },
+  { value: 1000, bgColor: '#1a4d2e', borderColor: '#2ecc71', innerColor: '#27693d', label: '1k' },
+  { value: 500, bgColor: '#8b0000', borderColor: '#ff4444', innerColor: '#a52a2a', label: '500' },
+  { value: 100, bgColor: '#f5f5f5', borderColor: '#999999', innerColor: '#e0e0e0', label: '100' },
 ];
 
 const SIZES = {
-  sm: { chip: 'w-5 h-5', offset: 2, fontSize: 'text-[6px]' },
-  md: { chip: 'w-7 h-7', offset: 3, fontSize: 'text-[8px]' },
-  lg: { chip: 'w-10 h-10', offset: 4, fontSize: 'text-xs' },
+  sm: { chip: 18, offset: 3, fontSize: 7, border: 2 },
+  md: { chip: 24, offset: 4, fontSize: 9, border: 2 },
+  lg: { chip: 32, offset: 5, fontSize: 11, border: 3 },
 };
 
 interface ChipDisplay {
-  color: string;
+  bgColor: string;
+  borderColor: string;
+  innerColor: string;
   count: number;
   value: number;
 }
@@ -37,7 +39,9 @@ function calculateChips(amount: number, maxChips: number): ChipDisplay[] {
     if (remaining >= chipDef.value) {
       const count = Math.floor(remaining / chipDef.value);
       chips.push({
-        color: chipDef.color,
+        bgColor: chipDef.bgColor,
+        borderColor: chipDef.borderColor,
+        innerColor: chipDef.innerColor,
         count: Math.min(count, maxChips),
         value: chipDef.value,
       });
@@ -74,41 +78,71 @@ export default function ChipStack({
   if (amount <= 0) return null;
 
   // Créer un tableau plat de tous les jetons individuels
-  const allChips: { color: string; index: number }[] = [];
+  const allChips: { bgColor: string; borderColor: string; innerColor: string; index: number }[] = [];
   let chipIndex = 0;
   for (const chip of chips) {
     for (let i = 0; i < chip.count; i++) {
-      allChips.push({ color: chip.color, index: chipIndex++ });
+      allChips.push({
+        bgColor: chip.bgColor,
+        borderColor: chip.borderColor,
+        innerColor: chip.innerColor,
+        index: chipIndex++,
+      });
     }
   }
 
   return (
     <div className="flex flex-col items-center">
       {/* Stack de jetons */}
-      <div className="relative" style={{ height: `${allChips.length * sizeConfig.offset + 20}px` }}>
+      <div className="relative" style={{ height: `${allChips.length * sizeConfig.offset + sizeConfig.chip}px`, width: `${sizeConfig.chip}px` }}>
         {allChips.map((chip, i) => (
           <div
             key={i}
-            className={`
-              absolute ${sizeConfig.chip} rounded-full border-2 border-dashed
-              ${chip.color}
-              shadow-md
-              ${animate ? 'animate-chip-stack' : ''}
-            `}
+            className={`absolute rounded-full ${animate ? 'animate-chip-stack' : ''}`}
             style={{
+              width: `${sizeConfig.chip}px`,
+              height: `${sizeConfig.chip}px`,
               bottom: `${i * sizeConfig.offset}px`,
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: i,
+              background: `radial-gradient(circle at 30% 30%, ${chip.innerColor}, ${chip.bgColor})`,
+              border: `${sizeConfig.border}px solid ${chip.borderColor}`,
+              boxShadow: `
+                inset 0 2px 4px rgba(255,255,255,0.2),
+                inset 0 -2px 4px rgba(0,0,0,0.3),
+                0 2px 4px rgba(0,0,0,0.4)
+              `,
               animationDelay: animate ? `${i * 50}ms` : undefined,
             }}
-          />
+          >
+            {/* Motif central du jeton */}
+            <div
+              className="absolute rounded-full"
+              style={{
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '60%',
+                height: '60%',
+                border: `1px dashed ${chip.borderColor}`,
+                opacity: 0.6,
+              }}
+            />
+          </div>
         ))}
       </div>
 
       {/* Montant affiché */}
       {showAmount && (
-        <div className={`text-poker-gold font-bold ${sizeConfig.fontSize} mt-1 whitespace-nowrap`}>
+        <div
+          className="font-bold whitespace-nowrap text-center mt-1"
+          style={{
+            fontSize: `${sizeConfig.fontSize}px`,
+            color: '#ffd700',
+            textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+          }}
+        >
           {formatAmount(amount)}
         </div>
       )}

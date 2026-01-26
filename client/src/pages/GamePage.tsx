@@ -391,17 +391,8 @@ export default function GamePage() {
         <div className={`relative w-full ${isMobile ? 'max-w-md aspect-[3/4]' : 'max-w-5xl aspect-[2/1]'}`}>
           {/* Table ovale */}
           <div className={`absolute inset-0 poker-table ${isMobile ? 'rounded-[40%]' : 'rounded-[50%]'}`}>
-            {/* Pot au centre */}
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center">
-              {/* Affichage visuel du pot avec jetons */}
-              <PotDisplay
-                mainPot={gameState.mainPot}
-                sidePots={gameState.sidePots}
-                compact={isMobile}
-                animate={gameState.phase === 'showdown'}
-              />
-
-              {/* Cartes communes */}
+            {/* Cartes communes en haut */}
+            <div className={`absolute left-1/2 transform -translate-x-1/2 ${isMobile ? 'top-[25%]' : 'top-[30%]'}`}>
               <div className={`flex justify-center ${isMobile ? 'gap-1' : 'gap-2'}`}>
                 {gameState.communityCards.map((card, i) => (
                   <Card key={i} suit={card.suit} rank={card.rank} size={cardSize} />
@@ -410,12 +401,22 @@ export default function GamePage() {
                 {Array.from({ length: 5 - gameState.communityCards.length }).map((_, i) => (
                   <div
                     key={`empty-${i}`}
-                    className={`rounded-lg border-2 border-dashed border-gray-600/50 ${
+                    className={`rounded-lg border-2 border-dashed border-gray-600/30 ${
                       isMobile ? 'w-8 h-12' : isTablet ? 'w-10 h-14' : 'w-14 h-20'
                     }`}
                   />
                 ))}
               </div>
+            </div>
+
+            {/* Pot en bas des cartes communes */}
+            <div className={`absolute left-1/2 transform -translate-x-1/2 ${isMobile ? 'top-[45%]' : 'top-[55%]'}`}>
+              <PotDisplay
+                mainPot={gameState.mainPot}
+                sidePots={gameState.sidePots}
+                compact={isMobile}
+                animate={gameState.phase === 'showdown'}
+              />
             </div>
           </div>
 
@@ -435,21 +436,33 @@ export default function GamePage() {
                   <div
                     className={`
                       relative flex flex-col items-center text-center
-                      ${player.isFolded ? 'opacity-40' : ''}
-                      ${gameState.currentPlayerId === player.odId ? 'scale-105' : ''}
-                      transition-transform duration-200
+                      ${player.isFolded ? 'opacity-50' : ''}
+                      ${gameState.currentPlayerId === player.odId ? 'scale-110' : ''}
+                      transition-all duration-300 ease-out
                     `}
                   >
-                    {/* Dealer button */}
+                    {/* Dealer button - repositionné */}
                     {player.isDealer && (
-                      <div className={`absolute bg-yellow-400 text-black rounded-full font-bold flex items-center justify-center shadow-lg z-10 ${
-                        isMobile ? '-top-1 -right-3 w-5 h-5 text-[9px]' : '-top-2 -right-4 w-7 h-7 text-xs'
+                      <div className={`absolute bg-gradient-to-br from-yellow-400 to-amber-500 text-black rounded-full font-bold flex items-center justify-center shadow-lg z-20 border-2 border-yellow-300 ${
+                        isMobile ? '-top-1 -right-1 w-5 h-5 text-[8px]' : '-top-2 -right-2 w-6 h-6 text-[10px]'
                       }`}>
                         D
                       </div>
                     )}
 
-                    {/* Timer au-dessus pour le joueur actuel */}
+                    {/* 1. BLIND INDICATOR EN HAUT */}
+                    {(player.isSmallBlind || player.isBigBlind) && (
+                      <div className={`mb-1 px-2 py-0.5 rounded-full font-bold shadow-md ${
+                        isMobile ? 'text-[8px]' : 'text-[10px]'
+                      } ${player.isSmallBlind
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
+                        : 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                      }`}>
+                        {player.isSmallBlind ? 'SB' : 'BB'}
+                      </div>
+                    )}
+
+                    {/* Timer pour le joueur actuel */}
                     {timerState && timerState.playerId === player.odId && gameState.currentPlayerId === player.odId && (
                       <div className="mb-1">
                         <TurnTimer
@@ -461,13 +474,8 @@ export default function GamePage() {
                       </div>
                     )}
 
-                    {/* Stack */}
-                    <div className={`text-poker-gold font-bold drop-shadow-lg ${isMobile ? 'text-xs' : 'text-sm'}`}>
-                      {formatAriary(player.chipStack)}
-                    </div>
-
-                    {/* Cartes au milieu */}
-                    <div className={`flex justify-center my-1 ${isMobile ? 'gap-0.5' : 'gap-1'}`}>
+                    {/* 2. CARTES */}
+                    <div className={`flex justify-center ${isMobile ? 'gap-0.5' : 'gap-1'} ${isMe ? 'mb-1' : 'my-1'}`}>
                       {/* Cartes du joueur (moi) */}
                       {isMe && player.holeCards && player.holeCards.length > 0 && (
                         <>
@@ -491,44 +499,62 @@ export default function GamePage() {
                       )}
                     </div>
 
-                    {/* Pseudo en bas */}
+                    {/* 3. STACK */}
+                    <div className={`font-bold drop-shadow-lg mb-0.5 ${isMobile ? 'text-[10px]' : 'text-xs'} ${
+                      isMe ? 'text-yellow-400' : 'text-green-400'
+                    }`}>
+                      {formatAriary(player.chipStack)}
+                    </div>
+
+                    {/* 4. PSEUDO EN BAS */}
                     <div
                       className={`
-                        px-2 py-0.5 rounded-full font-medium truncate max-w-[90px]
-                        ${isMobile ? 'text-[10px]' : 'text-xs'}
-                        ${isMe ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black' : 'bg-gray-800/90 text-white'}
-                        ${gameState.currentPlayerId === player.odId && !timerState ? 'ring-2 ring-green-400' : ''}
-                        shadow-lg
+                        px-2 py-0.5 rounded-lg font-semibold truncate max-w-[80px]
+                        ${isMobile ? 'text-[9px]' : 'text-[11px]'}
+                        ${isMe
+                          ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black shadow-lg shadow-yellow-500/30'
+                          : 'bg-gray-800/90 text-white border border-gray-600/50'}
+                        ${gameState.currentPlayerId === player.odId ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-transparent' : ''}
                       `}
                     >
                       {player.username}
                     </div>
 
-                    {/* Mise actuelle avec jetons visuels */}
+                    {/* Mise actuelle avec jetons visuels - à côté du joueur */}
                     {player.currentBet > 0 && (
-                      <div className={`absolute ${isMobile ? '-bottom-5' : '-bottom-7'}`}>
+                      <div className={`absolute ${
+                        isMobile
+                          ? 'top-1/2 -translate-y-1/2 -right-8'
+                          : 'top-1/2 -translate-y-1/2 -right-12'
+                      }`}>
                         <ChipStack
                           amount={player.currentBet}
                           size={isMobile ? 'sm' : 'md'}
-                          maxChips={isMobile ? 3 : 5}
+                          maxChips={isMobile ? 3 : 4}
                           showAmount={true}
                         />
                       </div>
                     )}
 
-                    {/* Status badges */}
+                    {/* Status badges - positionnés sous le pseudo */}
                     {player.isFolded && (
-                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[8px] px-2 py-0.5 rounded font-bold shadow">
+                      <div className={`mt-1 bg-red-600/90 text-white px-2 py-0.5 rounded font-bold shadow ${
+                        isMobile ? 'text-[7px]' : 'text-[9px]'
+                      }`}>
                         FOLD
                       </div>
                     )}
                     {player.isAllIn && (
-                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-purple-600 text-white text-[8px] px-2 py-0.5 rounded font-bold shadow animate-pulse">
+                      <div className={`mt-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white px-2 py-0.5 rounded font-bold shadow animate-pulse ${
+                        isMobile ? 'text-[7px]' : 'text-[9px]'
+                      }`}>
                         ALL-IN
                       </div>
                     )}
                     {player.isAway && (
-                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-yellow-600 text-white text-[8px] px-2 py-0.5 rounded font-bold shadow animate-pulse">
+                      <div className={`mt-1 bg-yellow-600/90 text-white px-2 py-0.5 rounded font-bold shadow animate-pulse ${
+                        isMobile ? 'text-[7px]' : 'text-[9px]'
+                      }`}>
                         ABSENT
                       </div>
                     )}
