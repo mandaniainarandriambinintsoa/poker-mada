@@ -472,9 +472,9 @@ export default function GamePage() {
 
                     {/* 1. MISE DU JOUEUR EN HAUT */}
                     {player.currentBet > 0 && (
-                      <div className={`mb-1 px-2 py-0.5 rounded-full font-bold shadow-md ${
-                        isMobile ? 'text-[8px]' : 'text-[10px]'
-                      } bg-gradient-to-r from-yellow-600 to-amber-500 text-white`}>
+                      <div className={`mb-1 font-bold text-yellow-400 ${
+                        isMobile ? 'text-[10px]' : 'text-xs'
+                      }`}>
                         {player.currentBet}
                       </div>
                     )}
@@ -526,12 +526,10 @@ export default function GamePage() {
                     {/* 4. PSEUDO EN BAS */}
                     <div
                       className={`
-                        px-2 py-0.5 rounded-lg font-semibold truncate max-w-[80px]
+                        font-medium truncate max-w-[80px]
                         ${isMobile ? 'text-[9px]' : 'text-[11px]'}
-                        ${isMe
-                          ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black shadow-lg shadow-yellow-500/30'
-                          : 'bg-gray-800/90 text-white border border-gray-600/50'}
-                        ${gameState.currentPlayerId === player.odId ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-transparent' : ''}
+                        ${isMe ? 'text-yellow-400' : 'text-white/80'}
+                        ${gameState.currentPlayerId === player.odId ? 'text-green-400' : ''}
                       `}
                     >
                       {player.username}

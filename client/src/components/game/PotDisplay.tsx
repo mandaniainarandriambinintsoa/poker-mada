@@ -100,15 +100,10 @@ export default function PotDisplay({
       {/* Montant du pot principal - affiché en premier */}
       <div
         className={`
-          font-bold rounded-full flex items-center justify-center
-          ${compact ? 'text-sm px-2 py-0.5' : 'text-lg px-3 py-1'}
+          font-bold text-yellow-400
+          ${compact ? 'text-sm' : 'text-lg'}
           ${animate ? 'animate-pulse' : ''}
         `}
-        style={{
-          background: 'rgba(0,0,0,0.5)',
-          color: '#ffd700',
-          textShadow: '0 1px 2px rgba(0,0,0,0.8)',
-        }}
       >
         {formatPotAmount(mainPot)}
       </div>
@@ -166,20 +161,13 @@ export default function PotDisplay({
 
       {/* Side pots */}
       {sidePots.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1 justify-center">
+        <div className="mt-1 flex flex-wrap gap-2 justify-center">
           {sidePots.map((sidePot, i) => (
             <div
               key={i}
-              className={`px-2 py-0.5 rounded-lg ${compact ? 'text-[10px]' : 'text-xs'}`}
-              style={{
-                background: 'rgba(0,0,0,0.4)',
-                border: '1px solid rgba(255,255,255,0.1)',
-              }}
+              className={`${compact ? 'text-[10px]' : 'text-xs'} text-yellow-400/70`}
             >
-              <span className="text-gray-400">Side {i + 1}: </span>
-              <span className="text-yellow-400 font-semibold">
-                {formatPotAmount(sidePot.amount)}
-              </span>
+              Side {i + 1}: {formatPotAmount(sidePot.amount)}
             </div>
           ))}
         </div>
