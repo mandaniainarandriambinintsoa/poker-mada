@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext';
 import Card from '../components/game/Card';
 import ActionPanel from '../components/game/ActionPanel';
 import WinnerAnnouncement from '../components/game/WinnerAnnouncement';
-import ChipStack from '../components/game/ChipStack';
 import PotDisplay from '../components/game/PotDisplay';
 import TurnTimer from '../components/game/TurnTimer';
 import AwayOverlay from '../components/game/AwayOverlay';
