@@ -3,9 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Note: directUrl removed because Supabase direct connection requires IPv6
+  // and Render uses IPv4. Using pooler connection for all operations.
 }
 
 // ============================================
