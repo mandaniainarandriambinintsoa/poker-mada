@@ -337,13 +337,16 @@ export default function GamePage() {
 
   // Debug logging for turn detection
   if (gameState && user) {
-    console.log('[GamePage] Turn check:', {
+    console.log('[GamePage] Debug:', {
       userId: user.id,
       currentPlayerId: gameState.currentPlayerId,
       isMyTurn,
       myPlayerFound: !!myPlayer,
+      myPlayerHoleCards: myPlayer?.holeCards?.length ?? 0,
+      mySeatNumber,
       availableActions: gameState.availableActions,
       phase: gameState.phase,
+      timerState: timerState ? { playerId: timerState.playerId, timeRemaining: timerState.timeRemaining } : null,
     });
   }
 
@@ -357,6 +360,14 @@ export default function GamePage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
+      {/* DEBUG PANEL - À RETIRER */}
+      {myPlayer && (
+        <div className="bg-red-900 text-white text-xs p-2">
+          <div>DEBUG: holeCards={myPlayer.holeCards?.length ?? 'undefined'} | isMyTurn={isMyTurn ? 'OUI' : 'NON'} | timer={timerState ? timerState.timeRemaining + 's' : 'null'}</div>
+          <div>phase={gameState.phase} | seat={mySeatNumber} | actions=[{gameState.availableActions.join(',')}]</div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-gray-800 px-2 sm:px-4 py-2 sm:py-3 flex justify-between items-center">
         <div className="flex-1 min-w-0">
