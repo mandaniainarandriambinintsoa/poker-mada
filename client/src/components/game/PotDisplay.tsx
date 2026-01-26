@@ -101,15 +101,13 @@ export default function PotDisplay({
       <div
         className={`
           font-bold rounded-full flex items-center justify-center
-          ${compact ? 'text-base px-3 py-1' : 'text-xl px-4 py-1.5'}
+          ${compact ? 'text-sm px-2 py-0.5' : 'text-lg px-3 py-1'}
           ${animate ? 'animate-pulse' : ''}
         `}
         style={{
-          background: 'linear-gradient(135deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.4) 100%)',
+          background: 'rgba(0,0,0,0.5)',
           color: '#ffd700',
-          textShadow: '0 2px 4px rgba(0,0,0,0.8)',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)',
-          border: '1px solid rgba(255,215,0,0.3)',
+          textShadow: '0 1px 2px rgba(0,0,0,0.8)',
         }}
       >
         {formatPotAmount(mainPot)}

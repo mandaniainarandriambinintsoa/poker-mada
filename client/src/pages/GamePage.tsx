@@ -178,14 +178,30 @@ export default function GamePage() {
 
   // Gestionnaire de mise à jour d'état avec détection de gagnant
   const handleGameStateUpdate = useCallback((state: GameState) => {
-    setGameState(state);
+    setGameState((prevState) => {
+      // Reset l'état "absent" quand une nouvelle main commence
+      if (prevState && state.handNumber !== prevState.handNumber) {
+        setIsAway(false);
+        setAwayStartTime(undefined);
+      }
+      return state;
+    });
+
+    // Vérifier si le joueur actuel n'est plus marqué comme away côté serveur
+    if (user) {
+      const myPlayer = state.players.find(p => p.odId === user.id);
+      if (myPlayer && !myPlayer.isAway) {
+        setIsAway(false);
+        setAwayStartTime(undefined);
+      }
+    }
 
     // Détecter le showdown avec des gagnants
     if (state.phase === 'showdown' && state.lastWinners && state.lastWinners.length > 0) {
       setCurrentWinners(state.lastWinners);
       setShowWinnerAnnouncement(true);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!socket || !isConnected || !tableId) return;
@@ -290,6 +306,11 @@ export default function GamePage() {
 
   const handleAction = (action: string, amount?: number) => {
     if (!socket || !tableId) return;
+    // Reset l'état "absent" quand le joueur fait une action
+    if (isAway) {
+      setIsAway(false);
+      setAwayStartTime(undefined);
+    }
     socket.emit('game:action', { tableId, action, amount });
   };
 
@@ -450,15 +471,12 @@ export default function GamePage() {
                       </div>
                     )}
 
-                    {/* 1. BLIND INDICATOR EN HAUT */}
-                    {(player.isSmallBlind || player.isBigBlind) && (
+                    {/* 1. MISE DU JOUEUR EN HAUT */}
+                    {player.currentBet > 0 && (
                       <div className={`mb-1 px-2 py-0.5 rounded-full font-bold shadow-md ${
                         isMobile ? 'text-[8px]' : 'text-[10px]'
-                      } ${player.isSmallBlind
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-                        : 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
-                      }`}>
-                        {player.isSmallBlind ? 'SB' : 'BB'}
+                      } bg-gradient-to-r from-yellow-600 to-amber-500 text-white`}>
+                        {player.currentBet}
                       </div>
                     )}
 
@@ -520,21 +538,6 @@ export default function GamePage() {
                       {player.username}
                     </div>
 
-                    {/* Mise actuelle avec jetons visuels - à côté du joueur */}
-                    {player.currentBet > 0 && (
-                      <div className={`absolute ${
-                        isMobile
-                          ? 'top-1/2 -translate-y-1/2 -right-8'
-                          : 'top-1/2 -translate-y-1/2 -right-12'
-                      }`}>
-                        <ChipStack
-                          amount={player.currentBet}
-                          size={isMobile ? 'sm' : 'md'}
-                          maxChips={isMobile ? 3 : 4}
-                          showAmount={true}
-                        />
-                      </div>
-                    )}
 
                     {/* Status badges - positionnés sous le pseudo */}
                     {player.isFolded && (
