@@ -1,4 +1,4 @@
-import { GameState, GamePhase, PlayerAction, TablePlayer, Card as CardType } from '../shared/types/game';
+import { GameState, GamePhase, PlayerAction, TablePlayer, Card as CardType, WinnerInfo, HandRank } from '../shared/types/game';
 import { Card } from './Card';
 import { Deck } from './Deck';
 import { PotManager } from './Pot';
@@ -21,12 +21,16 @@ interface Player {
   avatar?: string;
   seatNumber: number;
   chipStack: number;
+  initialBuyIn: number; // Buy-in initial pour le calcul du frozenBalance
   currentBet: number;
   holeCards: Card[];
   isActive: boolean;
   isFolded: boolean;
   isAllIn: boolean;
   isSittingOut: boolean;
+  isAway: boolean; // Joueur marqué comme absent
+  awayStartTime?: number; // Timestamp du début de l'absence
+  consecutiveTimeouts: number; // Nombre d'auto-folds consécutifs
   hasActed: boolean;
   lastAction?: PlayerAction;
 }
@@ -46,11 +50,20 @@ export class PokerTable {
   private minRaise: number = 0;
   private turnStartTime: number = 0;
   private lastRaiser: string | null = null;
+  private lastWinners: WinnerInfo[] = [];
+
+  // Callback pour notifier quand une nouvelle main commence
+  private onNewHandCallback?: () => void;
 
   constructor(config: TableConfig) {
     this.config = config;
     this.deck = new Deck();
     this.pot = new PotManager();
+  }
+
+  // Définir le callback pour nouvelle main
+  setOnNewHandCallback(callback: () => void): void {
+    this.onNewHandCallback = callback;
   }
 
   // Gestion des joueurs
@@ -75,12 +88,15 @@ export class PokerTable {
       avatar,
       seatNumber,
       chipStack: buyIn,
+      initialBuyIn: buyIn, // Stocker le buy-in initial
       currentBet: 0,
       holeCards: [],
       isActive: true,
       isFolded: false,
       isAllIn: false,
       isSittingOut: false,
+      isAway: false,
+      consecutiveTimeouts: 0,
       hasActed: false,
     });
 
@@ -106,6 +122,133 @@ export class PokerTable {
     return player;
   }
 
+  /**
+   * Vérifie si un joueur peut quitter la table selon les règles du poker
+   * @returns { canLeave: boolean, reason?: string }
+   */
+  canPlayerLeave(playerId: string): { canLeave: boolean; reason?: string } {
+    const player = this.findPlayerById(playerId);
+    if (!player) {
+      return { canLeave: true }; // Joueur pas trouvé, peut partir
+    }
+
+    // Règle 1: Pas de départ pendant une main active si le joueur n'a pas fold
+    if (this.phase !== 'waiting' && this.phase !== 'showdown') {
+      // Si le joueur a des cartes et n'a pas fold
+      if (player.holeCards.length > 0 && !player.isFolded) {
+        return {
+          canLeave: false,
+          reason: 'Vous ne pouvez pas quitter pendant une main en cours. Attendez la fin de la main ou faites fold.',
+        };
+      }
+    }
+
+    // Règle 2: Pas d'esquive des blinds
+    // Le joueur ne peut pas quitter s'il doit payer la SB ou BB à la prochaine main
+    if (this.phase === 'waiting' || this.phase === 'showdown') {
+      const seats = this.getActiveSeatNumbers();
+      if (seats.length >= 2) {
+        const dealerIndex = seats.indexOf(this.dealerPosition);
+        const nextDealerIndex = (dealerIndex + 1) % seats.length;
+
+        // Position SB après le prochain dealer
+        const nextSbSeat = seats[(nextDealerIndex + 1) % seats.length];
+        // Position BB après le prochain dealer
+        const nextBbSeat = seats[(nextDealerIndex + 2) % seats.length];
+
+        if (player.seatNumber === nextSbSeat || player.seatNumber === nextBbSeat) {
+          return {
+            canLeave: false,
+            reason: 'Vous ne pouvez pas quitter maintenant car vous devez payer les blinds à la prochaine main. Attendez votre tour de dealer.',
+          };
+        }
+      }
+    }
+
+    return { canLeave: true };
+  }
+
+  /**
+   * Force le fold d'un joueur qui veut quitter pendant une main
+   * @returns true si le fold a été effectué
+   */
+  forcePlayerFold(playerId: string): boolean {
+    const player = this.findPlayerById(playerId);
+    if (!player) return false;
+
+    // Si le joueur n'a pas encore fold et a des cartes
+    if (!player.isFolded && player.holeCards.length > 0) {
+      player.isFolded = true;
+      player.hasActed = true;
+      player.lastAction = 'fold';
+
+      // Vérifier si c'était le tour du joueur
+      if (player.seatNumber === this.currentPlayerIndex) {
+        this.checkForWinner();
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+  // === Gestion des joueurs absents ===
+
+  /**
+   * Incrémente le compteur d'auto-folds consécutifs pour un joueur
+   * @returns Le nouveau nombre d'auto-folds consécutifs
+   */
+  incrementConsecutiveTimeouts(playerId: string): number {
+    const player = this.findPlayerById(playerId);
+    if (!player) return 0;
+    player.consecutiveTimeouts++;
+    return player.consecutiveTimeouts;
+  }
+
+  /**
+   * Réinitialise le compteur d'auto-folds quand un joueur joue manuellement
+   */
+  resetConsecutiveTimeouts(playerId: string): void {
+    const player = this.findPlayerById(playerId);
+    if (player) {
+      player.consecutiveTimeouts = 0;
+    }
+  }
+
+  /**
+   * Marque un joueur comme absent
+   */
+  setPlayerAway(playerId: string): void {
+    const player = this.findPlayerById(playerId);
+    if (player) {
+      player.isAway = true;
+      player.awayStartTime = Date.now();
+      console.log(`[TABLE] Player ${player.username} marked as away`);
+    }
+  }
+
+  /**
+   * Marque un joueur comme revenu (plus absent)
+   */
+  setPlayerReturned(playerId: string): void {
+    const player = this.findPlayerById(playerId);
+    if (player) {
+      player.isAway = false;
+      player.awayStartTime = undefined;
+      player.consecutiveTimeouts = 0;
+      console.log(`[TABLE] Player ${player.username} returned`);
+    }
+  }
+
+  /**
+   * Vérifie si un joueur est marqué comme absent
+   */
+  isPlayerAway(playerId: string): boolean {
+    const player = this.findPlayerById(playerId);
+    return player?.isAway ?? false;
+  }
+
   // Démarrage d'une nouvelle main
   startNewHand(): void {
     this.handNumber++;
@@ -114,6 +257,7 @@ export class PokerTable {
     this.pot.reset();
     this.currentBet = 0;
     this.lastRaiser = null;
+    this.lastWinners = [];
 
     // Réinitialiser les joueurs
     for (const player of this.players.values()) {
@@ -139,6 +283,12 @@ export class PokerTable {
 
     // Démarrer le premier tour
     this.startTurn();
+
+    // Notifier qu'une nouvelle main a commencé
+    console.log(`=== NEW HAND #${this.handNumber} started ===`);
+    if (this.onNewHandCallback) {
+      this.onNewHandCallback();
+    }
   }
 
   private moveDealer(): void {
@@ -257,7 +407,9 @@ export class PokerTable {
 
   private fold(player: Player): boolean {
     player.isFolded = true;
-    player.isActive = false;
+    // Ne pas mettre isActive = false ici !
+    // isActive indique si le joueur est à la table, pas s'il a fold dans la main actuelle
+    // isFolded suffit pour marquer qu'il a fold
     player.hasActed = true;
     player.lastAction = 'fold';
 
@@ -392,23 +544,48 @@ export class PokerTable {
     );
 
     const playerHands = new Map<string, { holeCards: Card[]; communityCards: Card[] }>();
+    const evaluatedHands = new Map<string, ReturnType<typeof HandEvaluator.evaluate>>();
 
     for (const player of activePlayers) {
       playerHands.set(player.odId, {
         holeCards: player.holeCards,
         communityCards: this.communityCards,
       });
+      // Évaluer la main pour les informations du gagnant
+      const evaluated = HandEvaluator.evaluate(player.holeCards, this.communityCards);
+      evaluatedHands.set(player.odId, evaluated);
     }
 
     const winnings = this.pot.distributePot(playerHands);
 
-    // Ajouter les gains aux stacks des joueurs
+    // Construire les informations détaillées sur les gagnants
+    this.lastWinners = [];
+    const winnerIds = Array.from(winnings.keys());
+    const isSplit = winnerIds.length > 1;
+
     for (const [playerId, amount] of winnings) {
       const player = this.findPlayerById(playerId);
-      if (player) {
+      const evaluated = evaluatedHands.get(playerId);
+
+      if (player && evaluated) {
+        this.lastWinners.push({
+          odId: playerId,
+          username: player.username,
+          amount,
+          handDescription: evaluated.description,
+          handRank: evaluated.rank as HandRank,
+          winningCards: (evaluated.cards as Card[]).map(c => c.toJSON()),
+          holeCards: player.holeCards.map(c => c.toJSON()),
+          potType: 'main',
+          isSplit,
+        });
+
+        // Ajouter les gains au stack du joueur
         player.chipStack += amount;
       }
     }
+
+    console.log(`=== SHOWDOWN: Winners: ${this.lastWinners.map(w => `${w.username} (${w.handDescription}) - ${w.amount} Ar`).join(', ')} ===`);
 
     // Après un délai, démarrer une nouvelle main
     setTimeout(() => {
@@ -426,8 +603,28 @@ export class PokerTable {
     if (activePlayers.length === 1) {
       // Un seul joueur reste, il gagne tout
       const winner = activePlayers[0];
-      winner.chipStack += this.pot.getTotal();
+      const potTotal = this.pot.getTotal();
+      winner.chipStack += potTotal;
+
+      // Enregistrer les informations du gagnant (sans showdown)
+      this.lastWinners = [{
+        odId: winner.odId,
+        username: winner.username,
+        amount: potTotal,
+        handDescription: 'Tous les autres joueurs ont fold',
+        handRank: 'high-card' as HandRank,
+        winningCards: [],
+        holeCards: winner.holeCards.map(c => c.toJSON()),
+        potType: 'main',
+        isSplit: false,
+      }];
+
       this.pot.reset();
+
+      // Marquer la fin de la main
+      this.phase = 'showdown';
+      this.currentPlayerIndex = -1;
+      console.log(`=== HAND OVER: ${winner.username} wins ${potTotal} Ar! Starting new hand in 3 seconds ===`);
 
       // Démarrer une nouvelle main après un délai
       setTimeout(() => {
@@ -471,23 +668,42 @@ export class PokerTable {
   getAvailableActions(playerId: string): PlayerAction[] {
     const player = this.findPlayerById(playerId);
     if (!player || player.seatNumber !== this.currentPlayerIndex) {
+      console.log(`getAvailableActions(${playerId}): not current player. playerSeat=${player?.seatNumber}, currentIdx=${this.currentPlayerIndex}`);
+      return [];
+    }
+
+    // Si le joueur est fold ou all-in, pas d'actions
+    if (player.isFolded || player.isAllIn) {
+      console.log(`getAvailableActions(${playerId}): player folded or all-in`);
       return [];
     }
 
     const actions: PlayerAction[] = ['fold'];
+    const toCall = this.currentBet - player.currentBet;
+    console.log(`getAvailableActions(${playerId}): toCall=${toCall}, currentBet=${this.currentBet}, playerBet=${player.currentBet}`);
 
-    if (player.currentBet >= this.currentBet) {
+    // Check: possible si aucune mise à suivre
+    if (toCall <= 0) {
       actions.push('check');
     } else {
-      actions.push('call');
+      // Call: si on a assez de jetons
+      if (player.chipStack >= toCall) {
+        actions.push('call');
+      }
     }
 
-    if (player.chipStack > this.currentBet - player.currentBet) {
+    // Raise: si on a plus que le montant à suivre
+    const minRaiseTotal = this.currentBet + this.minRaise;
+    if (player.chipStack > toCall && player.chipStack >= minRaiseTotal - player.currentBet) {
       actions.push('raise');
     }
 
-    actions.push('all-in');
+    // All-in: toujours possible si on a des jetons
+    if (player.chipStack > 0) {
+      actions.push('all-in');
+    }
 
+    console.log(`getAvailableActions(${playerId}): returning actions=[${actions.join(', ')}]`);
     return actions;
   }
 
@@ -504,6 +720,9 @@ export class PokerTable {
       isFolded: p.isFolded,
       isAllIn: p.isAllIn,
       isSittingOut: p.isSittingOut,
+      isAway: p.isAway,
+      awayStartTime: p.awayStartTime,
+      consecutiveTimeouts: p.consecutiveTimeouts,
       isDealer: p.seatNumber === this.dealerPosition,
       isSmallBlind: this.isSmallBlind(p.seatNumber),
       isBigBlind: this.isBigBlind(p.seatNumber),
@@ -538,6 +757,7 @@ export class PokerTable {
       turnStartTime: this.turnStartTime,
       turnTimeout: this.config.turnTimeout,
       availableActions: forPlayerId ? this.getAvailableActions(forPlayerId) : [],
+      lastWinners: this.phase === 'showdown' ? this.lastWinners : undefined,
     };
   }
 

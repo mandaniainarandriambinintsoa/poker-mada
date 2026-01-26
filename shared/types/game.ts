@@ -31,6 +31,9 @@ export interface TablePlayer {
   isFolded: boolean;
   isAllIn: boolean;
   isSittingOut: boolean;
+  isAway: boolean; // Joueur marqué comme absent (auto-fold répétés)
+  awayStartTime?: number; // Timestamp du début de l'absence
+  consecutiveTimeouts: number; // Nombre d'auto-folds consécutifs
   isDealer: boolean;
   isSmallBlind: boolean;
   isBigBlind: boolean;
@@ -44,6 +47,19 @@ export interface TablePlayer {
 export interface Pot {
   amount: number;
   eligiblePlayers: string[];
+}
+
+// Informations détaillées sur un gagnant
+export interface WinnerInfo {
+  odId: string;
+  username: string;
+  amount: number;
+  handDescription: string;
+  handRank: HandRank;
+  winningCards: Card[];
+  holeCards: Card[];
+  potType: 'main' | 'side';
+  isSplit: boolean;
 }
 
 // État complet du jeu
@@ -70,11 +86,8 @@ export interface GameState {
   turnStartTime: number;
   turnTimeout: number;
   availableActions: PlayerAction[];
-  winners?: {
-    odId: string
-    amount: number;
-    hand: string;
-  }[];
+  winners?: WinnerInfo[];
+  lastWinners?: WinnerInfo[];
 }
 
 // Configuration de table
@@ -109,4 +122,23 @@ export interface EvaluatedHand {
   rankValue: number;
   cards: Card[];
   description: string;
+}
+
+// === Chat Global & Utilisateurs en ligne ===
+
+export interface OnlineUser {
+  odId: string;
+  username: string;
+  avatar?: string;
+  status: 'lobby' | 'playing';
+  tableId?: string;
+}
+
+export interface GlobalChatMessage {
+  id: string;
+  odId: string;
+  username: string;
+  avatar?: string;
+  message: string;
+  timestamp: number;
 }

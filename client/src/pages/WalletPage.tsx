@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Header from '../components/common/Header';
 import { api, getErrorMessage } from '../services/api';
 
@@ -106,42 +106,42 @@ export default function WalletPage() {
     <div className="min-h-screen bg-gray-900">
       <Header />
 
-      <main className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold text-white mb-8">Portefeuille</h1>
+      <main className="container mx-auto px-4 py-4 sm:py-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-6 sm:mb-8">Portefeuille</h1>
 
         {/* Solde */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
           <div className="card">
-            <h3 className="text-gray-400 mb-2">Solde total</h3>
-            <p className="text-3xl font-bold text-white">
+            <h3 className="text-gray-400 text-sm sm:text-base mb-1 sm:mb-2">Solde total</h3>
+            <p className="text-2xl sm:text-3xl font-bold text-white">
               {balance ? formatAriary(balance.balance) : '-'}
             </p>
           </div>
           <div className="card">
-            <h3 className="text-gray-400 mb-2">Disponible</h3>
-            <p className="text-3xl font-bold text-green-500">
+            <h3 className="text-gray-400 text-sm sm:text-base mb-1 sm:mb-2">Disponible</h3>
+            <p className="text-2xl sm:text-3xl font-bold text-green-500">
               {balance ? formatAriary(balance.availableBalance) : '-'}
             </p>
           </div>
           <div className="card">
-            <h3 className="text-gray-400 mb-2">En jeu</h3>
-            <p className="text-3xl font-bold text-yellow-500">
+            <h3 className="text-gray-400 text-sm sm:text-base mb-1 sm:mb-2">En jeu</h3>
+            <p className="text-2xl sm:text-3xl font-bold text-yellow-500">
               {balance ? formatAriary(balance.frozenBalance) : '-'}
             </p>
           </div>
         </div>
 
         {/* Actions */}
-        <div className="flex gap-4 mb-8">
+        <div className="flex gap-3 sm:gap-4 mb-6 sm:mb-8">
           <button
             onClick={() => setShowDepositModal(true)}
-            className="btn btn-primary px-8 py-3"
+            className="btn btn-primary flex-1 sm:flex-none sm:px-8 py-3"
           >
             Déposer
           </button>
           <button
             onClick={() => setShowWithdrawModal(true)}
-            className="btn btn-secondary px-8 py-3"
+            className="btn btn-secondary flex-1 sm:flex-none sm:px-8 py-3"
             disabled={!balance || balance.availableBalance < 5000}
           >
             Retirer
@@ -252,9 +252,18 @@ function DepositModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="card max-w-md w-full mx-4">
-        <h2 className="text-2xl font-bold text-white mb-4">Déposer de l'argent</h2>
+    <div
+      className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !instructions) onClose();
+      }}
+    >
+      <div className="card w-full sm:max-w-md rounded-t-2xl sm:rounded-xl animate-slide-up sm:animate-fade-in max-h-[90vh] overflow-y-auto">
+        {/* Handle bar pour mobile */}
+        <div className="flex justify-center mb-2 sm:hidden">
+          <div className="w-12 h-1.5 bg-gray-600 rounded-full"></div>
+        </div>
+        <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Déposer de l'argent</h2>
 
         {error && (
           <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg mb-4">
@@ -328,14 +337,14 @@ function DepositModal({
               />
             </div>
 
-            <div className="flex gap-4">
-              <button onClick={onClose} className="btn btn-secondary flex-1">
+            <div className="flex gap-3 pt-2">
+              <button onClick={onClose} className="btn btn-secondary flex-1 py-3">
                 Annuler
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting || amount < 1000 || !phone}
-                className="btn btn-primary flex-1"
+                className="btn btn-primary flex-1 py-3"
               >
                 {isSubmitting ? 'Traitement...' : 'Déposer'}
               </button>
@@ -379,9 +388,18 @@ function WithdrawModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="card max-w-md w-full mx-4">
-        <h2 className="text-2xl font-bold text-white mb-4">Retirer de l'argent</h2>
+    <div
+      className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !success) onClose();
+      }}
+    >
+      <div className="card w-full sm:max-w-md rounded-t-2xl sm:rounded-xl animate-slide-up sm:animate-fade-in max-h-[90vh] overflow-y-auto">
+        {/* Handle bar pour mobile */}
+        <div className="flex justify-center mb-2 sm:hidden">
+          <div className="w-12 h-1.5 bg-gray-600 rounded-full"></div>
+        </div>
+        <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Retirer de l'argent</h2>
 
         {error && (
           <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg mb-4">
@@ -450,14 +468,14 @@ function WithdrawModal({
               />
             </div>
 
-            <div className="flex gap-4">
-              <button onClick={onClose} className="btn btn-secondary flex-1">
+            <div className="flex gap-3 pt-2">
+              <button onClick={onClose} className="btn btn-secondary flex-1 py-3">
                 Annuler
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting || amount < 5000 || amount > maxAmount || !phone}
-                className="btn btn-primary flex-1"
+                className="btn btn-primary flex-1 py-3"
               >
                 {isSubmitting ? 'Traitement...' : 'Retirer'}
               </button>

@@ -9,7 +9,7 @@ export const TABLE_CONFIGS = [
     bigBlind: 20,
     maxPlayers: 9,
     minPlayers: 2,
-    turnTimeout: 30,
+    turnTimeout: 15,
   },
   {
     id: 'table-medium',
@@ -21,7 +21,7 @@ export const TABLE_CONFIGS = [
     bigBlind: 100,
     maxPlayers: 9,
     minPlayers: 2,
-    turnTimeout: 30,
+    turnTimeout: 15,
   },
   {
     id: 'table-high',
@@ -33,14 +33,14 @@ export const TABLE_CONFIGS = [
     bigBlind: 400,
     maxPlayers: 9,
     minPlayers: 2,
-    turnTimeout: 30,
+    turnTimeout: 15,
   },
 ];
 
 export const GAME_CONSTANTS = {
   MIN_PLAYERS_TO_START: 2,
   MAX_PLAYERS_PER_TABLE: 9,
-  DEFAULT_TURN_TIMEOUT: 30,
+  DEFAULT_TURN_TIMEOUT: 15,
   TIME_BANK_INITIAL: 60,
   TIME_BANK_PER_HAND: 5,
 };

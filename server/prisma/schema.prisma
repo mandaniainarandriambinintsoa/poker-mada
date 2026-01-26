@@ -17,20 +17,27 @@ enum UserRole {
   SUPER_ADMIN
 }
 
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
 model User {
-  id            String    @id @default(uuid())
-  username      String    @unique
-  email         String    @unique
-  passwordHash  String
-  phone         String    @unique
-  phoneVerified Boolean   @default(false)
+  id            String       @id @default(uuid())
+  username      String       @unique
+  email         String       @unique
+  passwordHash  String?      // Nullable for OAuth users
+  phone         String?      @unique // Nullable for OAuth users
+  phoneVerified Boolean      @default(false)
   avatar        String?
-  role          UserRole  @default(PLAYER)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  role          UserRole     @default(PLAYER)
+  authProvider  AuthProvider @default(LOCAL)
+  googleId      String?      @unique
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
   lastLoginAt   DateTime?
-  isActive      Boolean   @default(true)
-  isBanned      Boolean   @default(false)
+  isActive      Boolean      @default(true)
+  isBanned      Boolean      @default(false)
 
   wallet           Wallet?
   transactions     Transaction[]

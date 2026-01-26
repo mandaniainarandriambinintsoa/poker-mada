@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
@@ -51,6 +51,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     newSocket.on('reconnect-required', () => {
       newSocket.disconnect();
       newSocket.connect();
+    });
+
+    // Redirection automatique si le joueur est déjà à une table
+    newSocket.on('player:already-at-table', (data: { tableId: string }) => {
+      console.log('[SocketContext] Player already at table, redirecting to:', data.tableId);
+      // Utiliser window.location pour une redirection immédiate
+      // Cela fonctionne même si les composants React ne sont pas encore montés
+      const currentPath = window.location.pathname;
+      const targetPath = `/game/${data.tableId}`;
+      if (currentPath !== targetPath) {
+        window.location.href = targetPath;
+      }
     });
 
     setSocket(newSocket);

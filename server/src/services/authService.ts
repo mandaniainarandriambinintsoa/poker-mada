@@ -3,9 +3,11 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../config/database';
 import { config } from '../config/env';
+import { supabase } from '../config/supabase';
 import { AppError } from '../middleware/errorHandler';
 
 const SALT_ROUNDS = 12;
+const STARTING_BALANCE = 10000; // Jetons de départ gratuits
 
 interface TokenPair {
   token: string;
@@ -16,7 +18,7 @@ interface UserData {
   id: string;
   username: string;
   email: string;
-  phone: string;
+  phone: string | null;
   avatar: string | null;
   role: string;
   createdAt: Date;
@@ -51,14 +53,13 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     // Créer l'utilisateur et son portefeuille avec jetons de départ
-    const STARTING_BALANCE = 10000; // Jetons de départ gratuits
-
     const user = await prisma.user.create({
       data: {
         username,
         email,
         passwordHash,
         phone,
+        authProvider: 'LOCAL',
         wallet: {
           create: {
             balance: STARTING_BALANCE,
@@ -73,6 +74,7 @@ export class AuthService {
         phone: true,
         avatar: true,
         role: true,
+        authProvider: true,
         createdAt: true,
       },
     });
@@ -94,6 +96,7 @@ export class AuthService {
         phone: true,
         avatar: true,
         role: true,
+        authProvider: true,
         createdAt: true,
         passwordHash: true,
         isActive: true,
@@ -113,7 +116,15 @@ export class AuthService {
       throw new AppError('Compte banni', 403, 'ACCOUNT_BANNED');
     }
 
+    // Vérifier si l'utilisateur utilise OAuth
+    if (user.authProvider !== 'LOCAL') {
+      throw new AppError('Ce compte utilise Google. Veuillez vous connecter avec Google.', 400, 'USE_OAUTH');
+    }
+
     // Vérifier le mot de passe
+    if (!user.passwordHash) {
+      throw new AppError('Email ou mot de passe incorrect', 401, 'INVALID_CREDENTIALS');
+    }
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     if (!isValidPassword) {
       throw new AppError('Email ou mot de passe incorrect', 401, 'INVALID_CREDENTIALS');
@@ -238,6 +249,11 @@ export class AuthService {
       throw new AppError('Utilisateur non trouvé', 404, 'USER_NOT_FOUND');
     }
 
+    // Les utilisateurs OAuth ne peuvent pas changer leur mot de passe
+    if (!user.passwordHash) {
+      throw new AppError('Les comptes Google ne peuvent pas modifier leur mot de passe', 400, 'OAUTH_USER');
+    }
+
     // Vérifier le mot de passe actuel
     const isValidPassword = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!isValidPassword) {
@@ -252,6 +268,142 @@ export class AuthService {
       where: { id: userId },
       data: { passwordHash },
     });
+  }
+
+  async getGoogleAuthUrl(): Promise<string> {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${config.clientUrl}/auth/callback`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
+
+    if (error || !data.url) {
+      throw new AppError('Erreur lors de la génération du lien Google', 500, 'OAUTH_ERROR');
+    }
+
+    return data.url;
+  }
+
+  async loginWithGoogle(accessToken: string): Promise<{ user: UserData; tokens: TokenPair }> {
+    // Vérifier le token avec Supabase
+    const { data: supabaseData, error: supabaseError } = await supabase.auth.getUser(accessToken);
+
+    if (supabaseError || !supabaseData.user) {
+      throw new AppError('Token Google invalide', 401, 'INVALID_GOOGLE_TOKEN');
+    }
+
+    const googleUser = supabaseData.user;
+    const email = googleUser.email;
+    const googleId = googleUser.id;
+
+    if (!email) {
+      throw new AppError('Email non disponible depuis Google', 400, 'NO_EMAIL');
+    }
+
+    // Chercher l'utilisateur existant
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [{ googleId }, { email }],
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        authProvider: true,
+        googleId: true,
+        createdAt: true,
+        isActive: true,
+        isBanned: true,
+      },
+    });
+
+    if (user) {
+      // Utilisateur existant
+      if (!user.isActive) {
+        throw new AppError('Compte désactivé', 403, 'ACCOUNT_DISABLED');
+      }
+
+      if (user.isBanned) {
+        throw new AppError('Compte banni', 403, 'ACCOUNT_BANNED');
+      }
+
+      // Si l'utilisateur existe avec cet email mais sans googleId, lier le compte
+      if (!user.googleId) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            googleId,
+            authProvider: 'GOOGLE',
+            avatar: user.avatar || googleUser.user_metadata?.avatar_url,
+          },
+        });
+      }
+
+      // Mettre à jour la dernière connexion et avatar si nécessaire
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          lastLoginAt: new Date(),
+          avatar: user.avatar || googleUser.user_metadata?.avatar_url,
+        },
+      });
+    } else {
+      // Créer un nouvel utilisateur
+      const username = this.generateUsername(googleUser.user_metadata?.full_name || email.split('@')[0]);
+
+      user = await prisma.user.create({
+        data: {
+          username,
+          email,
+          googleId,
+          authProvider: 'GOOGLE',
+          avatar: googleUser.user_metadata?.avatar_url,
+          wallet: {
+            create: {
+              balance: STARTING_BALANCE,
+              frozenBalance: 0,
+            },
+          },
+        },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          phone: true,
+          avatar: true,
+          role: true,
+          authProvider: true,
+          googleId: true,
+          createdAt: true,
+          isActive: true,
+          isBanned: true,
+        },
+      });
+    }
+
+    // Générer les tokens
+    const tokens = await this.generateTokens(user.id, user.email);
+
+    const { isActive, isBanned, googleId: _, ...userData } = user;
+    return { user: userData, tokens };
+  }
+
+  private generateUsername(baseName: string): string {
+    // Nettoyer le nom et ajouter un suffixe aléatoire
+    const cleanName = baseName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 20);
+    const suffix = Math.random().toString(36).substring(2, 6);
+    return `${cleanName}_${suffix}`;
   }
 
   private async generateTokens(userId: string, email: string): Promise<TokenPair> {

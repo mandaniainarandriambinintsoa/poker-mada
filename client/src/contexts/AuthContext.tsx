@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api, getErrorMessage } from '../services/api';
+import { supabase } from '../config/supabase';
 
 interface User {
   id: string;
@@ -17,6 +18,8 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
+  handleGoogleCallback: () => Promise<void>;
   register: (username: string, email: string, password: string, phone: string) => Promise<void>;
   logout: () => void;
   error: string | null;
@@ -92,8 +95,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginWithGoogle = async () => {
+    setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur de connexion Google';
+      setError(message);
+      throw new Error(message);
+    }
+  };
+
+  const handleGoogleCallback = async () => {
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError || !session) {
+        throw new Error('Session Google invalide');
+      }
+
+      // Envoyer le token au backend pour créer/lier le compte
+      const response = await api.post('/auth/google/callback', {
+        access_token: session.access_token,
+      });
+
+      const { user, token, refreshToken } = response.data;
+
+      localStorage.setItem('token', token);
+      localStorage.setItem('refreshToken', refreshToken);
+      setUser(user);
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = () => {
     api.post('/auth/logout').catch(() => {});
+    supabase.auth.signOut().catch(() => {});
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
     setUser(null);
@@ -113,6 +167,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAdmin,
         isSuperAdmin,
         login,
+        loginWithGoogle,
+        handleGoogleCallback,
         register,
         logout,
         error,

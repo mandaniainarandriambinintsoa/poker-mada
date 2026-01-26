@@ -33,4 +33,9 @@ export const config = {
     clientId: process.env.AIRTEL_MONEY_CLIENT_ID || '',
     clientSecret: process.env.AIRTEL_MONEY_CLIENT_SECRET || '',
   },
+
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    anonKey: process.env.SUPABASE_ANON_KEY || '',
+  },
 };

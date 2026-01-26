@@ -28,7 +28,45 @@ export const refreshTokenSchema = z.object({
 });
 
 // Contrôleur
+export const googleCallbackSchema = z.object({
+  access_token: z.string().min(1, 'Token requis'),
+});
+
 export class AuthController {
+  async googleAuth(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const url = await authService.getGoogleAuthUrl();
+      res.json({ url });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async googleCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { access_token } = req.body;
+
+      const { user, tokens } = await authService.loginWithGoogle(access_token);
+
+      res.json({
+        message: 'Connexion Google réussie',
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          phone: user.phone,
+          avatar: user.avatar,
+          role: user.role,
+          createdAt: user.createdAt,
+        },
+        token: tokens.token,
+        refreshToken: tokens.refreshToken,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { username, email, password, phone } = req.body;

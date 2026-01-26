@@ -6,6 +6,7 @@ import { SocketProvider } from './contexts/SocketContext';
 // Pages
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import AuthCallbackPage from './pages/AuthCallbackPage';
 import LobbyPage from './pages/LobbyPage';
 import GamePage from './pages/GamePage';
 import WalletPage from './pages/WalletPage';
@@ -74,6 +75,10 @@ function AppRoutes() {
             <RegisterPage />
           </PublicRoute>
         }
+      />
+      <Route
+        path="/auth/callback"
+        element={<AuthCallbackPage />}
       />
 
       {/* Routes protégées */}
