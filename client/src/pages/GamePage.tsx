@@ -323,6 +323,18 @@ export default function GamePage() {
   const myPlayer = gameState?.players.find((p) => p.odId === user?.id);
   const isMyTurn = gameState?.currentPlayerId === user?.id;
 
+  // Calculer la rotation pour que le joueur actuel soit toujours en position 0 (bas centre)
+  const mySeatNumber = myPlayer?.seatNumber ?? 0;
+
+  // Fonction pour obtenir le joueur à une position visuelle donnée
+  // La position visuelle 0 = bas centre (moi), les autres sont tournés autour
+  const getPlayerAtVisualPosition = useCallback((visualPos: number): TablePlayer | undefined => {
+    if (!gameState) return undefined;
+    // Calculer le seatNumber réel basé sur la rotation
+    const realSeatNumber = (visualPos + mySeatNumber) % gameState.maxPlayers;
+    return gameState.players.find((p) => p.seatNumber === realSeatNumber);
+  }, [gameState, mySeatNumber]);
+
   // Debug logging for turn detection
   if (gameState && user) {
     console.log('[GamePage] Turn check:', {
@@ -396,14 +408,15 @@ export default function GamePage() {
             </div>
           </div>
 
-          {/* Sièges des joueurs */}
-          {seatPositions.map((pos, seatNum) => {
-            const player = gameState.players.find((p) => p.seatNumber === seatNum);
+          {/* Sièges des joueurs - tournés pour que le joueur actuel soit en bas */}
+          {seatPositions.map((pos, visualSeatNum) => {
+            // Utiliser la position visuelle pour obtenir le joueur (rotation)
+            const player = getPlayerAtVisualPosition(visualSeatNum);
             const isMe = player?.odId === user?.id;
 
             return (
               <div
-                key={seatNum}
+                key={visualSeatNum}
                 className="absolute"
                 style={pos}
               >
@@ -412,7 +425,7 @@ export default function GamePage() {
                     className={`
                       relative flex flex-col items-center text-center
                       ${player.isFolded ? 'opacity-40' : ''}
-                      ${gameState.currentPlayerIndex === seatNum ? 'scale-105' : ''}
+                      ${gameState.currentPlayerId === player.odId ? 'scale-105' : ''}
                       transition-transform duration-200
                     `}
                   >
@@ -473,7 +486,7 @@ export default function GamePage() {
                         px-2 py-0.5 rounded-full font-medium truncate max-w-[90px]
                         ${isMobile ? 'text-[10px]' : 'text-xs'}
                         ${isMe ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black' : 'bg-gray-800/90 text-white'}
-                        ${gameState.currentPlayerIndex === seatNum && !timerState ? 'ring-2 ring-green-400' : ''}
+                        ${gameState.currentPlayerId === player.odId && !timerState ? 'ring-2 ring-green-400' : ''}
                         shadow-lg
                       `}
                     >
@@ -513,7 +526,8 @@ export default function GamePage() {
                   <div className={`rounded-full border-2 border-dashed border-gray-600/50 flex items-center justify-center text-gray-500 ${
                     isMobile ? 'w-12 h-12 text-[8px]' : 'w-20 h-20 text-xs'
                   }`}>
-                    {isMobile ? seatNum + 1 : `Siège ${seatNum + 1}`}
+                    {/* Afficher le numéro de siège réel, pas visuel */}
+                    {isMobile ? ((visualSeatNum + mySeatNumber) % gameState.maxPlayers) + 1 : `Siège ${((visualSeatNum + mySeatNumber) % gameState.maxPlayers) + 1}`}
                   </div>
                 )}
               </div>
