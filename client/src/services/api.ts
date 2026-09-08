@@ -9,6 +9,8 @@ export const api = axios.create({
   },
 });
 
+let refreshPromise: Promise<string> | null = null;
+
 // Intercepteur pour ajouter le token
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem('token');
@@ -30,12 +32,21 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken');
       if (refreshToken) {
         try {
-          const response = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
-          const { token, refreshToken: newRefreshToken } = response.data;
+          if (!refreshPromise) {
+            refreshPromise = axios
+              .post(`${API_URL}/auth/refresh`, { refreshToken })
+              .then((response) => {
+                const { token, refreshToken: newRefreshToken } = response.data;
+                localStorage.setItem('token', token);
+                localStorage.setItem('refreshToken', newRefreshToken);
+                return token as string;
+              })
+              .finally(() => {
+                refreshPromise = null;
+              });
+          }
 
-          localStorage.setItem('token', token);
-          localStorage.setItem('refreshToken', newRefreshToken);
-
+          const token = await refreshPromise;
           originalRequest.headers.Authorization = `Bearer ${token}`;
           return api(originalRequest);
         } catch {

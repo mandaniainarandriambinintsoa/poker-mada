@@ -155,13 +155,20 @@ export class AuthService {
     }
 
     if (storedToken.expiresAt < new Date()) {
-      // Supprimer le token expiré
-      await prisma.refreshToken.delete({ where: { id: storedToken.id } });
+      // deleteMany reste sûr si une autre requête a déjà invalidé ce token.
+      await prisma.refreshToken.deleteMany({ where: { id: storedToken.id } });
       throw new AppError('Refresh token expiré', 401, 'REFRESH_TOKEN_EXPIRED');
     }
 
-    // Supprimer l'ancien refresh token (rotation)
-    await prisma.refreshToken.delete({ where: { id: storedToken.id } });
+    // La rotation doit être consommable une seule fois. Deux refresh simultanés
+    // ne doivent pas produire une erreur Prisma 500 ni deux nouvelles sessions.
+    const deletion = await prisma.refreshToken.deleteMany({
+      where: { id: storedToken.id, token: refreshToken },
+    });
+
+    if (deletion.count === 0) {
+      throw new AppError('Refresh token déjà utilisé', 401, 'INVALID_REFRESH_TOKEN');
+    }
 
     // Générer de nouveaux tokens
     return this.generateTokens(storedToken.userId, storedToken.user.email);

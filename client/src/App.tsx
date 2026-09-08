@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
 
 // Pages
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
@@ -141,9 +142,9 @@ function AppRoutes() {
         }
       />
 
-      {/* Redirection par défaut */}
-      <Route path="/" element={<Navigate to="/lobby" replace />} />
-      <Route path="*" element={<Navigate to="/lobby" replace />} />
+      {/* Landing page publique */}
+      <Route path="/" element={<LandingPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

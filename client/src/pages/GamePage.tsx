@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
 import Card from '../components/game/Card';
-import ActionPanel from '../components/game/ActionPanel';
+import ActionPanel, { type PlayerAction } from '../components/game/ActionPanel';
 import WinnerAnnouncement from '../components/game/WinnerAnnouncement';
 import PotDisplay from '../components/game/PotDisplay';
 import TurnTimer from '../components/game/TurnTimer';
@@ -86,6 +86,19 @@ interface GameState {
 
 function formatAriary(amount: number): string {
   return new Intl.NumberFormat('fr-MG').format(amount) + ' Ar';
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  waiting: 'En attente',
+  preflop: 'Pré-flop',
+  flop: 'Flop',
+  turn: 'Turn',
+  river: 'River',
+  showdown: 'Showdown',
+};
+
+function getInitials(username: string): string {
+  return username.slice(0, 2).toUpperCase();
 }
 
 // Positions des sièges autour d'une table ovale (pour 9 joueurs)
@@ -303,7 +316,7 @@ export default function GamePage() {
     };
   }, [socket, isConnected, tableId, navigate, handleGameStateUpdate, searchParams, user]);
 
-  const handleAction = (action: string, amount?: number) => {
+  const handleAction = (action: PlayerAction, amount?: number) => {
     if (!socket || !tableId) return;
     // Reset l'état "absent" quand le joueur fait une action
     if (isAway) {
@@ -355,82 +368,73 @@ export default function GamePage() {
     return gameState.players.find((p) => p.seatNumber === realSeatNumber);
   }, [gameState, mySeatNumber]);
 
-  // Debug logging for turn detection
-  if (gameState && user) {
-    console.log('[GamePage] Debug:', {
-      userId: user.id,
-      currentPlayerId: gameState.currentPlayerId,
-      isMyTurn,
-      myPlayerFound: !!myPlayer,
-      myPlayerHoleCards: myPlayer?.holeCards?.length ?? 0,
-      mySeatNumber,
-      availableActions: gameState.availableActions,
-      phase: gameState.phase,
-      timerState: timerState ? { playerId: timerState.playerId, timeRemaining: timerState.timeRemaining } : null,
-    });
-  }
-
   if (!gameState) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-white text-xl">Chargement de la table...</div>
+      <div className="game-loading">
+        <span className="game-loading__mark">PM</span>
+        <div>
+          <strong>Préparation de la table</strong>
+          <span>On mélange les cartes…</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      {/* DEBUG PANEL - À RETIRER */}
-      {myPlayer && (
-        <div className="bg-red-900 text-white text-xs p-2">
-          <div>DEBUG: holeCards={myPlayer.holeCards?.length ?? 'undefined'} | isMyTurn={isMyTurn ? 'OUI' : 'NON'} | timer={timerState ? timerState.timeRemaining + 's' : 'null'}</div>
-          <div>phase={gameState.phase} | seat={mySeatNumber} | actions=[{gameState.availableActions.join(',')}]</div>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="bg-gray-800 px-2 sm:px-4 py-2 sm:py-3 flex justify-between items-center">
-        <div className="flex-1 min-w-0">
-          <h1 className={`font-bold text-white truncate ${isMobile ? 'text-sm' : 'text-xl'}`}>
-            {gameState.tableName}
-          </h1>
-          <p className={`text-gray-400 ${isMobile ? 'text-[10px]' : 'text-sm'}`}>
-            {isMobile
-              ? `${formatAriary(gameState.smallBlind)}/${formatAriary(gameState.bigBlind)} #${gameState.handNumber}`
-              : `Blinds: ${formatAriary(gameState.smallBlind)} / ${formatAriary(gameState.bigBlind)} | Main #${gameState.handNumber}`
-            }
-          </p>
-        </div>
-        <button onClick={handleLeaveTable} className={`btn btn-danger whitespace-nowrap ${isMobile ? 'text-xs px-2 py-1' : ''}`}>
-          {isMobile ? 'Quitter' : 'Quitter la table'}
+    <main className={`game-room ${isMyTurn ? 'game-room--my-turn' : ''}`}>
+      <header className="game-topbar mobile-safe-top">
+        <button type="button" onClick={handleLeaveTable} className="game-topbar__back" aria-label="Quitter la table">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          <span>Lobby</span>
         </button>
-      </div>
+        <div className="game-topbar__identity">
+          <span className="game-topbar__kicker">Poker Mada · Cash game</span>
+          <h1>{gameState.tableName}</h1>
+        </div>
+        <div className="game-topbar__meta">
+          <div>
+            <span>Blinds</span>
+            <strong>{formatAriary(gameState.smallBlind)} / {formatAriary(gameState.bigBlind)}</strong>
+          </div>
+          <div>
+            <span>Main</span>
+            <strong>#{gameState.handNumber}</strong>
+          </div>
+          <span className={`connection-pill ${isConnected ? 'is-online' : ''}`}>
+            <i aria-hidden="true" />
+            {isConnected ? 'En ligne' : 'Reconnexion'}
+          </span>
+        </div>
+      </header>
 
-      {/* Table de poker */}
-      <div className={`flex-1 flex items-center justify-center p-2 sm:p-4 ${isMobile ? 'game-table-container' : ''}`}>
-        <div className={`relative w-full ${isMobile ? 'max-w-md aspect-[3/4]' : 'max-w-5xl aspect-[2/1]'}`}>
-          {/* Table ovale */}
-          <div className={`absolute inset-0 poker-table ${isMobile ? 'rounded-[40%]' : 'rounded-[50%]'}`}>
-            {/* Cartes communes en haut */}
-            <div className={`absolute left-1/2 transform -translate-x-1/2 ${isMobile ? 'top-[25%]' : 'top-[30%]'}`}>
-              <div className={`flex justify-center ${isMobile ? 'gap-1' : 'gap-2'}`}>
+      <section className="game-arena" aria-label="Table de poker">
+        <div className={`game-table-wrap ${isMobile ? 'is-mobile' : ''}`}>
+          <div className="poker-table">
+            <div className="poker-table__line" aria-hidden="true" />
+            <div className="poker-table__brand" aria-hidden="true">
+              <span>PM</span>
+              <small>Madagascar</small>
+            </div>
+
+            <div className="community-zone">
+              <div className="community-zone__phase">
+                <span>{PHASE_LABELS[gameState.phase] ?? gameState.phase}</span>
+                <i />
+                <span>{gameState.communityCards.length}/5 cartes</span>
+              </div>
+              <div className="community-cards">
                 {gameState.communityCards.map((card, i) => (
                   <Card key={i} suit={card.suit} rank={card.rank} size={cardSize} />
                 ))}
-                {/* Espaces vides pour les cartes à venir */}
                 {Array.from({ length: 5 - gameState.communityCards.length }).map((_, i) => (
-                  <div
-                    key={`empty-${i}`}
-                    className={`rounded-lg border-2 border-dashed border-gray-600/30 ${
-                      isMobile ? 'w-8 h-12' : isTablet ? 'w-10 h-14' : 'w-14 h-20'
-                    }`}
-                  />
+                  <div key={`empty-${i}`} className={`poker-card-slot poker-card-slot--${cardSize}`} />
                 ))}
               </div>
             </div>
 
-            {/* Pot en bas des cartes communes */}
-            <div className={`absolute left-1/2 transform -translate-x-1/2 ${isMobile ? 'top-[45%]' : 'top-[55%]'}`}>
+            <div className="pot-zone">
               <PotDisplay
                 mainPot={gameState.mainPot}
                 sidePots={gameState.sidePots}
@@ -440,181 +444,110 @@ export default function GamePage() {
             </div>
           </div>
 
-          {/* Sièges des joueurs - tournés pour que le joueur actuel soit en bas */}
           {seatPositions.map((pos, visualSeatNum) => {
-            // Utiliser la position visuelle pour obtenir le joueur (rotation)
             const player = getPlayerAtVisualPosition(visualSeatNum);
             const isMe = player?.odId === user?.id;
+            const isCurrent = gameState.currentPlayerId === player?.odId;
 
             return (
-              <div
-                key={visualSeatNum}
-                className="absolute"
-                style={pos}
-              >
+              <div key={visualSeatNum} className="game-seat" style={pos}>
                 {player ? (
-                  <div
-                    className={`
-                      relative flex flex-col items-center text-center
-                      ${player.isFolded ? 'opacity-50' : ''}
-                      ${gameState.currentPlayerId === player.odId ? 'scale-110' : ''}
-                      transition-all duration-300 ease-out
-                    `}
-                  >
-                    {/* Dealer button - repositionné */}
+                  <div className={`player-seat ${isMe ? 'player-seat--hero' : ''} ${isCurrent ? 'is-active' : ''} ${player.isFolded ? 'is-folded' : ''}`}>
                     {player.isDealer && (
-                      <div className={`absolute bg-gradient-to-br from-yellow-400 to-amber-500 text-black rounded-full font-bold flex items-center justify-center shadow-lg z-20 border-2 border-yellow-300 ${
-                        isMobile ? '-top-1 -right-1 w-5 h-5 text-[8px]' : '-top-2 -right-2 w-6 h-6 text-[10px]'
-                      }`}>
-                        D
-                      </div>
+                      <span className="dealer-chip" aria-label="Donneur">D</span>
                     )}
 
-                    {/* 1. MISE DU JOUEUR EN HAUT */}
                     {player.currentBet > 0 && (
-                      <div className={`mb-1 font-bold text-yellow-400 ${
-                        isMobile ? 'text-[10px]' : 'text-xs'
-                      }`}>
-                        {player.currentBet}
-                      </div>
+                      <span className="player-bet">
+                        <i aria-hidden="true" />
+                        {formatAriary(player.currentBet)}
+                      </span>
                     )}
 
-                    {/* Timer pour le joueur actuel */}
-                    {timerState && timerState.playerId === player.odId && gameState.currentPlayerId === player.odId && (
-                      <div className="mb-1">
+                    <div className="player-seat__cards">
+                      {isMe && player.holeCards?.map((card, i) => (
+                        <Card key={i} suit={card.suit} rank={card.rank} size={holeCardSize} />
+                      ))}
+                      {!isMe && !player.isFolded && gameState.phase !== 'waiting' && (
+                        <>
+                          <Card faceDown size={isMobile ? 'xs' : 'sm'} />
+                          <Card faceDown size={isMobile ? 'xs' : 'sm'} />
+                        </>
+                      )}
+                    </div>
+
+                    <div className="player-seat__panel">
+                      <div className="player-avatar" aria-hidden="true">{getInitials(player.username)}</div>
+                      <div className="player-seat__info">
+                        <strong>{isMe ? 'Vous' : player.username}</strong>
+                        <span>{formatAriary(player.chipStack)}</span>
+                      </div>
+                      {timerState && timerState.playerId === player.odId && isCurrent && (
                         <TurnTimer
                           timeRemaining={timerState.timeRemaining}
                           totalTime={timerState.totalTime}
-                          isActive={true}
+                          isActive
                           size={isMobile ? 'sm' : 'md'}
                         />
-                      </div>
-                    )}
-
-                    {/* 2. CARTES */}
-                    <div className={`flex justify-center ${isMobile ? 'gap-0.5' : 'gap-1'} ${isMe ? 'mb-1' : 'my-1'}`}>
-                      {/* Cartes du joueur (moi) */}
-                      {isMe && player.holeCards && player.holeCards.length > 0 && (
-                        <>
-                          {player.holeCards.map((card, i) => (
-                            <Card key={i} suit={card.suit} rank={card.rank} size={holeCardSize} />
-                          ))}
-                        </>
-                      )}
-
-                      {/* Cartes face cachée pour les autres */}
-                      {!isMe && !player.isFolded && gameState.phase !== 'waiting' && (
-                        <>
-                          <Card faceDown size={holeCardSize} />
-                          <Card faceDown size={holeCardSize} />
-                        </>
-                      )}
-
-                      {/* Placeholder si folded ou waiting */}
-                      {(player.isFolded || gameState.phase === 'waiting') && !isMe && (
-                        <div className={`${isMobile ? 'w-10 h-14' : 'w-14 h-20'}`} />
                       )}
                     </div>
 
-                    {/* 3. STACK */}
-                    <div className={`font-bold drop-shadow-lg mb-0.5 ${isMobile ? 'text-[10px]' : 'text-xs'} ${
-                      isMe ? 'text-yellow-400' : 'text-green-400'
-                    }`}>
-                      {formatAriary(player.chipStack)}
-                    </div>
-
-                    {/* 4. PSEUDO EN BAS */}
-                    <div
-                      className={`
-                        font-medium truncate max-w-[80px]
-                        ${isMobile ? 'text-[9px]' : 'text-[11px]'}
-                        ${isMe ? 'text-yellow-400' : 'text-white/80'}
-                        ${gameState.currentPlayerId === player.odId ? 'text-green-400' : ''}
-                      `}
-                    >
-                      {player.username}
-                    </div>
-
-
-                    {/* Status badges - positionnés sous le pseudo */}
-                    {player.isFolded && (
-                      <div className={`mt-1 bg-red-600/90 text-white px-2 py-0.5 rounded font-bold shadow ${
-                        isMobile ? 'text-[7px]' : 'text-[9px]'
-                      }`}>
-                        FOLD
-                      </div>
-                    )}
-                    {player.isAllIn && (
-                      <div className={`mt-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white px-2 py-0.5 rounded font-bold shadow animate-pulse ${
-                        isMobile ? 'text-[7px]' : 'text-[9px]'
-                      }`}>
-                        ALL-IN
-                      </div>
-                    )}
-                    {player.isAway && (
-                      <div className={`mt-1 bg-yellow-600/90 text-white px-2 py-0.5 rounded font-bold shadow animate-pulse ${
-                        isMobile ? 'text-[7px]' : 'text-[9px]'
-                      }`}>
-                        ABSENT
-                      </div>
+                    {(player.lastAction || player.isFolded || player.isAllIn || player.isAway) && (
+                      <span className={`player-status ${player.isAllIn ? 'is-all-in' : ''}`}>
+                        {player.isFolded ? 'Couché' : player.isAllIn ? 'Tapis' : player.isAway ? 'Absent' : player.lastAction}
+                      </span>
                     )}
                   </div>
                 ) : (
-                  <div className={`rounded-full border-2 border-dashed border-gray-600/50 flex items-center justify-center text-gray-500 ${
-                    isMobile ? 'w-12 h-12 text-[8px]' : 'w-20 h-20 text-xs'
-                  }`}>
-                    {/* Afficher le numéro de siège réel, pas visuel */}
-                    {isMobile ? ((visualSeatNum + mySeatNumber) % gameState.maxPlayers) + 1 : `Siège ${((visualSeatNum + mySeatNumber) % gameState.maxPlayers) + 1}`}
+                  <div className="empty-seat" aria-label={`Siège ${((visualSeatNum + mySeatNumber) % gameState.maxPlayers) + 1} libre`}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 7a7 7 0 0 1 14 0" />
+                    </svg>
+                    <span>Libre</span>
                   </div>
                 )}
               </div>
             );
           })}
         </div>
-      </div>
+      </section>
 
-      {/* Panel d'actions avec cartes du joueur sur mobile */}
       {isMyTurn && myPlayer && (
-        <div className={`flex flex-col items-center ${isMobile ? 'fixed bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur safe-area-bottom' : 'p-4'}`}>
-          {/* Cartes du joueur affichées au-dessus des actions sur mobile */}
-          {isMobile && myPlayer.holeCards && myPlayer.holeCards.length > 0 && (
-            <div className="flex items-center gap-3 py-2 border-b border-gray-700 w-full justify-center">
-              <span className="text-gray-400 text-xs">Vos cartes:</span>
-              <div className="flex gap-1">
-                {myPlayer.holeCards.map((card, i) => (
-                  <Card key={i} suit={card.suit} rank={card.rank} size="sm" />
-                ))}
-              </div>
-              <span className="text-poker-gold text-xs font-bold">{formatAriary(myPlayer.chipStack)}</span>
-            </div>
-          )}
-          <div className={isMobile ? 'p-2 w-full' : ''}>
-            <ActionPanel
-              availableActions={gameState.availableActions as any}
-              currentBet={gameState.currentBet}
-              myCurrentBet={myPlayer.currentBet}
-              myStack={myPlayer.chipStack}
-              minRaise={gameState.minRaise}
-              pot={gameState.mainPot}
-              onAction={handleAction}
-              compact={isMobile}
-            />
+        <div className="game-actions safe-area-bottom">
+          <ActionPanel
+            availableActions={gameState.availableActions as PlayerAction[]}
+            currentBet={gameState.currentBet}
+            myCurrentBet={myPlayer.currentBet}
+            myStack={myPlayer.chipStack}
+            minRaise={gameState.minRaise}
+            pot={gameState.mainPot}
+            onAction={handleAction}
+            compact={isMobile}
+          />
+        </div>
+      )}
+
+      {!isMyTurn && gameState.phase !== 'waiting' && (
+        <div className="game-status" role="status">
+          <span className="game-status__dots" aria-hidden="true"><i /><i /><i /></span>
+          <div>
+            <span>La partie continue</span>
+            <strong>
+              {gameState.currentPlayerId
+                ? `Au tour de ${gameState.players.find((p) => p.odId === gameState.currentPlayerId)?.username}`
+                : PHASE_LABELS[gameState.phase] ?? gameState.phase}
+            </strong>
           </div>
         </div>
       )}
 
-      {/* Status */}
-      {!isMyTurn && gameState.phase !== 'waiting' && (
-        <div className="p-4 text-center text-gray-400">
-          {gameState.currentPlayerId
-            ? `En attente de ${gameState.players.find((p) => p.odId === gameState.currentPlayerId)?.username}...`
-            : 'Phase: ' + gameState.phase}
-        </div>
-      )}
-
       {gameState.phase === 'waiting' && (
-        <div className="p-4 text-center text-yellow-400">
-          En attente d'autres joueurs...
+        <div className="game-status game-status--waiting" role="status">
+          <span className="game-status__dots" aria-hidden="true"><i /><i /><i /></span>
+          <div>
+            <span>Table ouverte</span>
+            <strong>En attente d’autres joueurs</strong>
+          </div>
         </div>
       )}
 
@@ -673,6 +606,6 @@ export default function GamePage() {
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }

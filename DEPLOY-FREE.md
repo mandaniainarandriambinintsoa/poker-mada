@@ -24,7 +24,7 @@
 ## Étape 2: Pousser le code sur GitHub
 
 ```bash
-cd C:\Users\Manda\webApp\poker-mada
+cd D:\webApp\poker-mada
 
 # Initialiser git
 git init
