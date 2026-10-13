@@ -39,3 +39,6 @@ server/prisma/migrations/
 # Misc
 *.pem
 .claude/
+.env.production
+playwright-report/
+test-results/

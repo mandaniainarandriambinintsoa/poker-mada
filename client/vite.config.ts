@@ -11,6 +11,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Vite 5 needs the private preview hostname passed explicitly.
+    allowedHosts: process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      ? [process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS]
+      : [],
     port: 5173,
     proxy: {
       '/api': {

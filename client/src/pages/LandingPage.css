@@ -1,0 +1,427 @@
+.landing {
+  --landing-gold: #d6bc83;
+  color: #f4f3ef;
+  background: #101211;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.landing a {
+  text-decoration: none;
+}
+.landing a:focus-visible {
+  outline: 2px solid var(--landing-gold);
+  outline-offset: 6px;
+  border-radius: 4px;
+}
+.landing__skip {
+  position: fixed;
+  top: -100px;
+  left: 20px;
+  z-index: 100;
+  padding: 12px;
+  color: #101211;
+  background: var(--landing-gold);
+}
+.landing__skip:focus {
+  top: 12px;
+}
+.landing__container,
+.landing__nav {
+  width: min(1080px, calc(100% - 64px));
+  margin: 0 auto;
+}
+.landing__header {
+  border-bottom: 1px solid #ffffff0e;
+}
+.landing__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 88px;
+  gap: 24px;
+}
+.landing__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  white-space: nowrap;
+}
+.landing__brand > span {
+  color: var(--landing-gold);
+  font-size: 25px;
+}
+.landing__sections {
+  display: flex;
+  gap: 32px;
+}
+.landing__sections a,
+.landing__login {
+  color: #b6bab6;
+  font-size: 13px;
+  padding: 12px 0;
+}
+.landing__login span {
+  margin-left: 8px;
+  color: var(--landing-gold);
+}
+.landing a {
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+}
+.landing__sections a:hover,
+.landing__login:hover {
+  color: #fff;
+}
+.landing__hero {
+  position: relative;
+  overflow: hidden;
+  padding: 88px 24px 46px;
+  text-align: center;
+}
+.landing__eyebrow {
+  color: var(--landing-gold);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  margin-bottom: 24px;
+}
+.landing h1 {
+  font-size: clamp(64px, 8vw, 108px);
+  font-weight: 500;
+  line-height: 1.02;
+  letter-spacing: -0.065em;
+}
+.landing h1 span {
+  color: var(--landing-gold);
+}
+.landing__intro {
+  margin-top: 28px;
+  color: #a6aca7;
+  font-size: 18px;
+  line-height: 1.7;
+  letter-spacing: -0.3px;
+}
+.landing__actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  margin-top: 32px;
+}
+.landing__button {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 14px 24px;
+  border-radius: 999px;
+  color: #191b17;
+  background: var(--landing-gold);
+  font-size: 14px;
+  font-weight: 600;
+}
+.landing__button:hover {
+  background: #e8d3a7;
+  transform: translateY(-2px);
+}
+.landing__text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--landing-gold);
+}
+.landing__text-link:hover {
+  color: #f1dfb9;
+}
+.landing__art {
+  position: relative;
+  width: min(480px, 100%);
+  height: 330px;
+  margin: 48px auto 0;
+}
+.landing__halo {
+  position: absolute;
+  inset: 10% -30% -15%;
+  background: radial-gradient(ellipse, #c9aa6420, transparent 65%);
+}
+.landing__playing-card {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 154px;
+  height: 218px;
+  padding: 15px;
+  border: 1px solid #ddd9cd;
+  border-radius: 14px;
+  background: linear-gradient(130deg, #fffef9, #d9d7cd);
+  color: #202923;
+  box-shadow: 0 24px 48px #0005;
+  font-family: Georgia, serif;
+  text-align: left;
+}
+.landing__playing-card > span {
+  display: flex;
+  flex-direction: column;
+  width: 24px;
+  align-items: center;
+  font-size: 24px;
+  line-height: 1;
+}
+.landing__playing-card small {
+  font-size: 17px;
+  margin-top: 4px;
+}
+.landing__playing-card b {
+  align-self: center;
+  font-size: 72px;
+  line-height: 1;
+  font-weight: 400;
+}
+.landing__playing-card > span:last-child {
+  align-self: flex-end;
+  transform: rotate(180deg);
+}
+.landing__playing-card--back {
+  transform: translateX(-85%) rotate(-17deg);
+}
+.landing__playing-card--front {
+  top: 34px;
+  color: #91443e;
+  transform: translateX(-15%) rotate(12deg);
+}
+.landing__chip {
+  position: absolute;
+  bottom: 48px;
+  left: 62%;
+  width: 64px;
+  height: 64px;
+  border: 7px dashed #d6bc83;
+  border-radius: 50%;
+  background: #252d26;
+  box-shadow:
+    0 5px 0 #8a754c,
+    0 14px 24px #0006;
+  transform: scaleY(0.65) rotate(-15deg);
+}
+.landing__chip::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1px solid #d6bc8370;
+  border-radius: 50%;
+}
+.landing__chip--two {
+  bottom: 59px;
+  left: 67%;
+}
+.landing__caption {
+  color: #90978f;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+.landing__experience {
+  padding-top: 100px;
+  padding-bottom: 112px;
+  border-top: 1px solid #ffffff10;
+}
+.landing h2 {
+  font-size: clamp(36px, 4.5vw, 56px);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+}
+.landing__section-intro {
+  color: #a6aca7;
+  margin-top: 24px;
+  font-size: 16px;
+  line-height: 1.75;
+}
+.landing__features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 48px;
+  margin-top: 64px;
+}
+.landing__features article {
+  border-top: 1px solid #ffffff20;
+  padding-top: 22px;
+}
+.landing__number {
+  color: var(--landing-gold);
+  font-size: 12px;
+}
+.landing h3 {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.4px;
+}
+.landing__features h3 {
+  max-width: 230px;
+  margin-top: 28px;
+}
+.landing__features p,
+.landing__steps p {
+  color: #a6aca7;
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.landing__start {
+  background: #191d19;
+  padding: 100px 0;
+}
+.landing__start-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 100px;
+  align-items: center;
+}
+.landing__start .landing__text-link {
+  margin-top: 24px;
+}
+.landing__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.landing__steps li {
+  display: flex;
+  gap: 24px;
+  padding: 28px 0;
+  border-bottom: 1px solid #ffffff12;
+}
+.landing__steps li:first-child {
+  padding-top: 0;
+}
+.landing__steps li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.landing__steps li > span {
+  color: var(--landing-gold);
+  font-size: 12px;
+  padding-top: 6px;
+}
+.landing__steps p {
+  margin-top: 7px;
+}
+.landing__closing {
+  padding: 100px 24px 112px;
+  text-align: center;
+}
+.landing__closing-suit {
+  display: block;
+  font-size: 36px;
+  color: var(--landing-gold);
+  margin-bottom: 28px;
+}
+.landing__closing p {
+  color: #a6aca7;
+  margin: 24px 0 32px;
+  font-size: 16px;
+}
+.landing__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  border-top: 1px solid #ffffff12;
+  padding: 36px 0;
+}
+.landing__footer p {
+  margin-top: 12px;
+  color: #90978f;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.landing__footer-meta {
+  text-align: right;
+}
+@media (max-width: 700px) {
+  .landing__container,
+  .landing__nav {
+    width: calc(100% - 40px);
+  }
+  .landing__nav {
+    min-height: 72px;
+    gap: 12px;
+  }
+  .landing__brand {
+    font-size: 17px;
+  }
+  .landing__sections {
+    display: none;
+  }
+  .landing__login {
+    font-size: 12px;
+  }
+  .landing__hero {
+    padding-top: 64px;
+  }
+  .landing h1 {
+    font-size: clamp(58px, 12vw, 80px);
+  }
+  .landing__intro {
+    font-size: 16px;
+  }
+  .landing__desktop-break {
+    display: none;
+  }
+  .landing__actions {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .landing__art {
+    margin-top: 32px;
+    height: 300px;
+  }
+  .landing__experience {
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  .landing__features {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    margin-top: 40px;
+  }
+  .landing__features h3 {
+    max-width: none;
+    margin-top: 16px;
+  }
+  .landing__start {
+    padding: 64px 0;
+  }
+  .landing__start-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .landing__closing {
+    padding: 64px 20px;
+  }
+  .landing__footer {
+    flex-direction: column;
+    gap: 20px;
+  }
+  .landing__footer-meta {
+    text-align: left;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing a {
+    transition: none;
+  }
+  .landing__button:hover {
+    transform: none;
+  }
+}
