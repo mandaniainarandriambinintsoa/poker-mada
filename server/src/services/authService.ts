@@ -1,13 +1,15 @@
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
+import { OAuth2Client } from 'google-auth-library';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { config } from '../config/env';
-import { supabase } from '../config/supabase';
 import { AppError } from '../middleware/errorHandler';
+import { createAccessToken, createRefreshToken, hashRefreshToken } from '../security/tokens';
 
 const SALT_ROUNDS = 12;
-const STARTING_BALANCE = 10000; // Jetons de départ gratuits
+const STARTING_BALANCE = config.nodeEnv === 'production' ? 0 : 10000;
+const googleClient = config.google.clientId ? new OAuth2Client(config.google.clientId) : null;
 
 interface TokenPair {
   token: string;
@@ -29,10 +31,12 @@ export class AuthService {
     username: string,
     email: string,
     password: string,
-    phone: string
+    phone: string,
   ): Promise<{ user: UserData; tokens: TokenPair }> {
     // Vérifier si l'email existe déjà
-    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    const existingEmail = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
     if (existingEmail) {
       throw new AppError('Cet email est déjà utilisé', 409, 'EMAIL_EXISTS');
     }
@@ -87,8 +91,8 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<{ user: UserData; tokens: TokenPair }> {
     // Trouver l'utilisateur
-    const user = await prisma.user.findUnique({
-      where: { email },
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
       select: {
         id: true,
         username: true,
@@ -118,7 +122,11 @@ export class AuthService {
 
     // Vérifier si l'utilisateur utilise OAuth
     if (user.authProvider !== 'LOCAL') {
-      throw new AppError('Ce compte utilise Google. Veuillez vous connecter avec Google.', 400, 'USE_OAUTH');
+      throw new AppError(
+        'Ce compte utilise Google. Veuillez vous connecter avec Google.',
+        400,
+        'USE_OAUTH',
+      );
     }
 
     // Vérifier le mot de passe
@@ -139,58 +147,131 @@ export class AuthService {
     // Générer les tokens
     const tokens = await this.generateTokens(user.id, user.email);
 
-    const { passwordHash, isActive, isBanned, ...userData } = user;
+    const {
+      passwordHash: _passwordHash,
+      isActive: _isActive,
+      isBanned: _isBanned,
+      ...userData
+    } = user;
     return { user: userData, tokens };
   }
 
   async refreshTokens(refreshToken: string): Promise<TokenPair> {
-    // Vérifier le refresh token dans la base
-    const storedToken = await prisma.refreshToken.findUnique({
-      where: { token: refreshToken },
-      include: { user: true },
-    });
+    const now = new Date();
+    const tokenHash = hashRefreshToken(refreshToken);
+    const replacement = createRefreshToken();
 
-    if (!storedToken) {
-      throw new AppError('Refresh token invalide', 401, 'INVALID_REFRESH_TOKEN');
+    const outcome = await prisma.$transaction(
+      async (
+        tx,
+      ): Promise<
+        | { tokens: TokenPair }
+        | { error: { message: string; code: 'REFRESH_TOKEN_REUSED' | 'REFRESH_TOKEN_EXPIRED' } }
+      > => {
+        const storedToken = await tx.refreshToken.findUnique({
+          where: { tokenHash },
+          include: { user: true },
+        });
+
+        if (!storedToken) {
+          throw new AppError('Refresh token invalide', 401, 'INVALID_REFRESH_TOKEN');
+        }
+
+        if (storedToken.revokedAt || storedToken.usedAt) {
+          await tx.refreshToken.updateMany({
+            where: { familyId: storedToken.familyId, revokedAt: null },
+            data: { revokedAt: now },
+          });
+          return {
+            error: {
+              message: 'Session réutilisée et révoquée',
+              code: 'REFRESH_TOKEN_REUSED',
+            },
+          };
+        }
+
+        if (
+          storedToken.expiresAt <= now ||
+          !storedToken.user.isActive ||
+          storedToken.user.isBanned
+        ) {
+          await tx.refreshToken.updateMany({
+            where: { familyId: storedToken.familyId, revokedAt: null },
+            data: { revokedAt: now },
+          });
+          return {
+            error: {
+              message: 'Session expirée ou révoquée',
+              code: 'REFRESH_TOKEN_EXPIRED',
+            },
+          };
+        }
+
+        const consumed = await tx.refreshToken.updateMany({
+          where: { id: storedToken.id, usedAt: null, revokedAt: null },
+          data: { usedAt: now },
+        });
+        if (consumed.count !== 1) {
+          await tx.refreshToken.updateMany({
+            where: { familyId: storedToken.familyId, revokedAt: null },
+            data: { revokedAt: now },
+          });
+          return {
+            error: {
+              message: 'Session réutilisée et révoquée',
+              code: 'REFRESH_TOKEN_REUSED',
+            },
+          };
+        }
+
+        await tx.refreshToken.create({
+          data: {
+            tokenHash: replacement.tokenHash,
+            familyId: storedToken.familyId,
+            userId: storedToken.userId,
+            expiresAt: this.refreshExpiry(now),
+          },
+        });
+
+        return {
+          tokens: {
+            token: createAccessToken(storedToken.userId, storedToken.user.email),
+            refreshToken: replacement.rawToken,
+          },
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if ('error' in outcome) {
+      throw new AppError(outcome.error.message, 401, outcome.error.code);
     }
-
-    if (storedToken.expiresAt < new Date()) {
-      // deleteMany reste sûr si une autre requête a déjà invalidé ce token.
-      await prisma.refreshToken.deleteMany({ where: { id: storedToken.id } });
-      throw new AppError('Refresh token expiré', 401, 'REFRESH_TOKEN_EXPIRED');
-    }
-
-    // La rotation doit être consommable une seule fois. Deux refresh simultanés
-    // ne doivent pas produire une erreur Prisma 500 ni deux nouvelles sessions.
-    const deletion = await prisma.refreshToken.deleteMany({
-      where: { id: storedToken.id, token: refreshToken },
-    });
-
-    if (deletion.count === 0) {
-      throw new AppError('Refresh token déjà utilisé', 401, 'INVALID_REFRESH_TOKEN');
-    }
-
-    // Générer de nouveaux tokens
-    return this.generateTokens(storedToken.userId, storedToken.user.email);
+    return outcome.tokens;
   }
 
   async logout(userId: string, refreshToken?: string): Promise<void> {
     if (refreshToken) {
-      // Supprimer le refresh token spécifique
-      await prisma.refreshToken.deleteMany({
-        where: { token: refreshToken, userId },
+      const storedToken = await prisma.refreshToken.findUnique({
+        where: { tokenHash: hashRefreshToken(refreshToken) },
+        select: { familyId: true, userId: true },
       });
+      if (storedToken?.userId === userId) {
+        await prisma.refreshToken.updateMany({
+          where: { familyId: storedToken.familyId, userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
     } else {
-      // Supprimer tous les refresh tokens de l'utilisateur
-      await prisma.refreshToken.deleteMany({
-        where: { userId },
+      await prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
     }
   }
 
   async updateProfile(
     userId: string,
-    data: { username?: string; email?: string; phone?: string }
+    data: { username?: string; phone?: string },
   ): Promise<UserData> {
     // Vérifier les unicités si les champs sont fournis
     if (data.username) {
@@ -199,15 +280,6 @@ export class AuthService {
       });
       if (existingUsername) {
         throw new AppError("Ce nom d'utilisateur est déjà pris", 409, 'USERNAME_EXISTS');
-      }
-    }
-
-    if (data.email) {
-      const existingEmail = await prisma.user.findFirst({
-        where: { email: data.email, NOT: { id: userId } },
-      });
-      if (existingEmail) {
-        throw new AppError('Cet email est déjà utilisé', 409, 'EMAIL_EXISTS');
       }
     }
 
@@ -224,8 +296,7 @@ export class AuthService {
       where: { id: userId },
       data: {
         ...(data.username && { username: data.username }),
-        ...(data.email && { email: data.email }),
-        ...(data.phone && { phone: data.phone }),
+        ...(data.phone && { phone: data.phone, phoneVerified: false }),
       },
       select: {
         id: true,
@@ -244,7 +315,7 @@ export class AuthService {
   async updatePassword(
     userId: string,
     currentPassword: string,
-    newPassword: string
+    newPassword: string,
   ): Promise<void> {
     // Récupérer l'utilisateur avec le hash du mot de passe
     const user = await prisma.user.findUnique({
@@ -258,7 +329,11 @@ export class AuthService {
 
     // Les utilisateurs OAuth ne peuvent pas changer leur mot de passe
     if (!user.passwordHash) {
-      throw new AppError('Les comptes Google ne peuvent pas modifier leur mot de passe', 400, 'OAUTH_USER');
+      throw new AppError(
+        'Les comptes Google ne peuvent pas modifier leur mot de passe',
+        400,
+        'OAUTH_USER',
+      );
     }
 
     // Vérifier le mot de passe actuel
@@ -270,137 +345,128 @@ export class AuthService {
     // Hasher le nouveau mot de passe
     const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
-    // Mettre à jour le mot de passe
-    await prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash },
-    });
+    // Changer le secret révoque toutes les sessions existantes.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.user.update({
+          where: { id: userId },
+          data: { passwordHash },
+        });
+        await tx.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        timeout: 5000,
+        maxWait: 5000,
+      },
+    );
   }
 
-  async getGoogleAuthUrl(): Promise<string> {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${config.clientUrl}/auth/callback`,
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
-    });
-
-    if (error || !data.url) {
-      throw new AppError('Erreur lors de la génération du lien Google', 500, 'OAUTH_ERROR');
+  async loginWithGoogle(idToken: string): Promise<{ user: UserData; tokens: TokenPair }> {
+    if (!googleClient || !config.google.clientId) {
+      throw new AppError('Connexion Google indisponible', 503, 'OAUTH_UNAVAILABLE');
     }
 
-    return data.url;
-  }
-
-  async loginWithGoogle(accessToken: string): Promise<{ user: UserData; tokens: TokenPair }> {
-    // Vérifier le token avec Supabase
-    const { data: supabaseData, error: supabaseError } = await supabase.auth.getUser(accessToken);
-
-    if (supabaseError || !supabaseData.user) {
-      throw new AppError('Token Google invalide', 401, 'INVALID_GOOGLE_TOKEN');
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: config.google.clientId,
+      });
+      payload = ticket.getPayload();
+    } catch {
+      throw new AppError('Jeton Google invalide', 401, 'INVALID_GOOGLE_TOKEN');
     }
 
-    const googleUser = supabaseData.user;
-    const email = googleUser.email;
-    const googleId = googleUser.id;
-
-    if (!email) {
-      throw new AppError('Email non disponible depuis Google', 400, 'NO_EMAIL');
+    if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+      throw new AppError('Identité Google non vérifiée', 401, 'UNVERIFIED_GOOGLE_IDENTITY');
     }
 
-    // Chercher l'utilisateur existant
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [{ googleId }, { email }],
-      },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        phone: true,
-        avatar: true,
-        role: true,
-        authProvider: true,
-        googleId: true,
-        createdAt: true,
-        isActive: true,
-        isBanned: true,
-      },
-    });
+    const googleId = payload.sub;
+    const email = payload.email.trim().toLowerCase();
+    const avatar = payload.picture || null;
+    const existingBySubject = await prisma.user.findUnique({ where: { googleId } });
+    const existingByEmail = existingBySubject
+      ? null
+      : await prisma.user.findFirst({
+          where: { email: { equals: email, mode: 'insensitive' } },
+        });
 
-    if (user) {
-      // Utilisateur existant
-      if (!user.isActive) {
+    if (existingByEmail?.authProvider !== undefined && existingByEmail.authProvider !== 'GOOGLE') {
+      throw new AppError(
+        'Ce courriel appartient déjà à un compte local. Connectez-vous avec son mot de passe.',
+        409,
+        'GOOGLE_ACCOUNT_CONFLICT',
+      );
+    }
+
+    const existing = existingBySubject || existingByEmail;
+    let user;
+    if (existing) {
+      if (!existing.isActive) {
         throw new AppError('Compte désactivé', 403, 'ACCOUNT_DISABLED');
       }
-
-      if (user.isBanned) {
+      if (existing.isBanned) {
         throw new AppError('Compte banni', 403, 'ACCOUNT_BANNED');
       }
 
-      // Si l'utilisateur existe avec cet email mais sans googleId, lier le compte
-      if (!user.googleId) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            googleId,
-            authProvider: 'GOOGLE',
-            avatar: user.avatar || googleUser.user_metadata?.avatar_url,
-          },
-        });
-      }
-
-      // Mettre à jour la dernière connexion et avatar si nécessaire
-      await prisma.user.update({
-        where: { id: user.id },
+      user = await prisma.user.update({
+        where: { id: existing.id },
         data: {
+          googleId,
+          authProvider: 'GOOGLE',
           lastLoginAt: new Date(),
-          avatar: user.avatar || googleUser.user_metadata?.avatar_url,
+          avatar: existing.avatar || avatar,
         },
       });
     } else {
-      // Créer un nouvel utilisateur
-      const username = this.generateUsername(googleUser.user_metadata?.full_name || email.split('@')[0]);
-
-      user = await prisma.user.create({
-        data: {
-          username,
-          email,
-          googleId,
-          authProvider: 'GOOGLE',
-          avatar: googleUser.user_metadata?.avatar_url,
-          wallet: {
-            create: {
-              balance: STARTING_BALANCE,
-              frozenBalance: 0,
-            },
-          },
-        },
-        select: {
-          id: true,
-          username: true,
-          email: true,
-          phone: true,
-          avatar: true,
-          role: true,
-          authProvider: true,
-          googleId: true,
-          createdAt: true,
-          isActive: true,
-          isBanned: true,
-        },
+      user = await this.createGoogleUser({
+        email,
+        googleId,
+        avatar,
+        displayName: payload.name || email.split('@')[0],
       });
     }
 
-    // Générer les tokens
     const tokens = await this.generateTokens(user.id, user.email);
-
-    const { isActive, isBanned, googleId: _, ...userData } = user;
+    const {
+      isActive: _isActive,
+      isBanned: _isBanned,
+      googleId: _,
+      passwordHash: _passwordHash,
+      ...userData
+    } = user;
     return { user: userData, tokens };
+  }
+
+  private async createGoogleUser(input: {
+    email: string;
+    googleId: string;
+    avatar: string | null;
+    displayName: string;
+  }) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await prisma.user.create({
+          data: {
+            username: this.generateUsername(input.displayName),
+            email: input.email,
+            googleId: input.googleId,
+            authProvider: 'GOOGLE',
+            avatar: input.avatar,
+            wallet: { create: { balance: STARTING_BALANCE, frozenBalance: 0 } },
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+      }
+    }
+    throw new AppError('Impossible de créer le compte Google', 409, 'ACCOUNT_CREATION_CONFLICT');
   }
 
   private generateUsername(baseName: string): string {
@@ -414,29 +480,24 @@ export class AuthService {
   }
 
   private async generateTokens(userId: string, email: string): Promise<TokenPair> {
-    // Générer le JWT
-    const token = jwt.sign({ userId, email }, config.jwt.secret, {
-      expiresIn: config.jwt.expiresIn as string | number,
-    } as jwt.SignOptions);
-
-    // Générer le refresh token
-    const refreshToken = uuidv4();
-
-    // Calculer l'expiration du refresh token
-    const expiresAt = new Date();
-    const days = parseInt(config.jwt.refreshExpiresIn.replace('d', ''), 10) || 7;
-    expiresAt.setDate(expiresAt.getDate() + days);
-
-    // Stocker le refresh token
+    const token = createAccessToken(userId, email);
+    const refreshToken = createRefreshToken();
     await prisma.refreshToken.create({
       data: {
-        token: refreshToken,
+        tokenHash: refreshToken.tokenHash,
+        familyId: randomUUID(),
         userId,
-        expiresAt,
+        expiresAt: this.refreshExpiry(new Date()),
       },
     });
 
-    return { token, refreshToken };
+    return { token, refreshToken: refreshToken.rawToken };
+  }
+
+  private refreshExpiry(from: Date): Date {
+    const match = /^(\d+)d$/.exec(config.jwt.refreshExpiresIn);
+    const days = match ? Number.parseInt(match[1], 10) : 7;
+    return new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
   }
 }
 

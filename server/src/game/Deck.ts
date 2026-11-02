@@ -1,4 +1,5 @@
 import { Card, SUITS, RANKS } from './Card';
+import { randomInt } from 'node:crypto';
 
 export class Deck {
   private cards: Card[] = [];
@@ -23,7 +24,7 @@ export class Deck {
   shuffle(): void {
     // Algorithme de Fisher-Yates
     for (let i = this.cards.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = randomInt(i + 1);
       [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]];
     }
   }

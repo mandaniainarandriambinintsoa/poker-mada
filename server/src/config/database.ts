@@ -17,9 +17,10 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    // Request handlers log safe error codes; Prisma error output may include row values.
+    log: process.env.NODE_ENV === 'development' ? ['warn'] : [],
     // Gestion des erreurs de connexion
-    errorFormat: 'pretty',
+    errorFormat: 'minimal',
   });
 
 if (process.env.NODE_ENV !== 'production') {
@@ -35,7 +36,12 @@ export async function connectDatabase(): Promise<void> {
     await prisma.$queryRaw`SELECT 1`;
     console.log('Database connection verified');
   } catch (error) {
-    console.error('Failed to connect to database:', error);
+    console.error(
+      JSON.stringify({
+        event: 'database.connection_failed',
+        type: error instanceof Error ? error.name : 'UnknownError',
+      }),
+    );
     process.exit(1);
   }
 }
@@ -45,7 +51,12 @@ export async function disconnectDatabase(): Promise<void> {
     await prisma.$disconnect();
     console.log('Database disconnected');
   } catch (error) {
-    console.error('Error disconnecting database:', error);
+    console.error(
+      JSON.stringify({
+        event: 'database.disconnect_failed',
+        type: error instanceof Error ? error.name : 'UnknownError',
+      }),
+    );
   }
 }
 
@@ -56,7 +67,7 @@ export async function disconnectDatabase(): Promise<void> {
 export async function withDatabaseRetry<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
-  delayMs: number = 1000
+  delayMs: number = 1000,
 ): Promise<T> {
   let lastError: Error | null = null;
 
@@ -73,7 +84,14 @@ export async function withDatabaseRetry<T>(
         errorMessage.includes('timeout') ||
         errorMessage.includes('ECONNREFUSED')
       ) {
-        console.warn(`Database operation failed (attempt ${attempt}/${maxRetries}): ${errorMessage}`);
+        console.warn(
+          JSON.stringify({
+            event: 'database.operation_retry',
+            attempt,
+            maxRetries,
+            type: lastError?.name || 'UnknownError',
+          }),
+        );
 
         if (attempt < maxRetries) {
           await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));

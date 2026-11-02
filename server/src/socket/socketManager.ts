@@ -1,13 +1,25 @@
+import { walletService } from '../services/walletService';
+import { AppError } from '../middleware/errorHandler';
+import { socketContracts } from './contracts';
+import { queueTable } from './tableQueue';
+import { PlayerAction } from '../shared/types/game';
 import { Server, Socket } from 'socket.io';
-import jwt from 'jsonwebtoken';
 import { config } from '../config/env';
 import { prisma } from '../config/database';
+import { verifyAccessToken } from '../security/tokens';
 import { PokerTable } from '../game/Table';
 import { TABLE_CONFIGS } from '../shared/constants/tables';
 import { botManager } from '../game/BotManager';
 import { turnTimerManager } from '../game/TurnTimer';
 import { awayManager, CONSECUTIVE_TIMEOUTS_THRESHOLD } from '../game/AwayManager';
-import { setActivePlayersProvider, startPeriodicReconciliation } from '../services/reconciliationService';
+import {
+  setActivePlayersProvider,
+  startPeriodicReconciliation,
+} from '../services/reconciliationService';
+
+const debugLog = (...args: unknown[]): void => {
+  if (config.nodeEnv !== 'production') console.log(...args);
+};
 
 // Variable globale pour l'instance io (pour les bots)
 // Force reload: 2026-01-25 v2
@@ -16,6 +28,8 @@ let ioInstance: Server;
 interface AuthenticatedSocket extends Socket {
   userId?: string;
   username?: string;
+  avatar?: string;
+  tokenExpiresAt?: number;
 }
 
 // Tables de poker actives
@@ -23,6 +37,24 @@ const activeTables: Map<string, PokerTable> = new Map();
 
 // Mapping joueur -> table
 const playerTables: Map<string, string> = new Map();
+const tableReservations = new Map<string, { id: string; tableId: string }>();
+const pendingSettlements = new Map<string, { tableId: string; chipStack: number }>();
+async function returnChips(userId: string, tableId: string, chipStack: number) {
+  const reservation = tableReservations.get(userId);
+  if (!reservation || reservation.tableId !== tableId) throw new Error('Missing table reservation');
+  pendingSettlements.set(userId, { tableId, chipStack });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await walletService.settleTable(userId, tableId, reservation.id, chipStack);
+      tableReservations.delete(userId);
+      pendingSettlements.delete(userId);
+      return;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
+    }
+  }
+}
 
 /**
  * Retourne l'ensemble des IDs des joueurs actuellement sur une table
@@ -35,6 +67,7 @@ export function getActivePlayers(): Set<string> {
 // Timers de déconnexion (délai de grâce pour les reconnexions)
 const disconnectTimers: Map<string, NodeJS.Timeout> = new Map();
 const DISCONNECT_GRACE_PERIOD_MS = 30000; // 30 secondes de grâce
+const SOCKET_AUTH_RECHECK_MS = 30_000;
 
 // === Chat Global & Utilisateurs en ligne ===
 interface OnlineUserInfo {
@@ -47,7 +80,14 @@ interface OnlineUserInfo {
 }
 
 const onlineUsers: Map<string, OnlineUserInfo> = new Map();
-const globalChatMessages: { id: string; odId: string; username: string; avatar?: string; message: string; timestamp: number }[] = [];
+const globalChatMessages: {
+  id: string;
+  odId: string;
+  username: string;
+  avatar?: string;
+  message: string;
+  timestamp: number;
+}[] = [];
 const MAX_CHAT_HISTORY = 50; // Garder les 50 derniers messages
 
 // Fonction pour obtenir la liste des utilisateurs en ligne
@@ -59,7 +99,7 @@ function getOnlineUsersList(): OnlineUserInfo[] {
 function handleGlobalChatMessage(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { message: string }
+  data: { message: string },
 ): void {
   const { message } = data;
 
@@ -93,6 +133,12 @@ export function initializeSocketManager(io: Server): void {
   // Stocker l'instance io pour les bots
   ioInstance = io;
 
+  botManager.setHumanPlayerSettlementHandler(async (playerId, tableId, chipStack) => {
+    await returnChips(playerId, tableId, chipStack);
+    playerTables.delete(playerId);
+    updateUserStatus(playerId, 'lobby', undefined);
+  });
+
   // Initialiser le service de réconciliation des balances gelées
   setActivePlayersProvider(getActivePlayers);
   startPeriodicReconciliation();
@@ -100,17 +146,18 @@ export function initializeSocketManager(io: Server): void {
   // Middleware d'authentification
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
+      const token =
+        socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
 
       if (!token) {
         return next(new Error('Token non fourni'));
       }
 
-      const decoded = jwt.verify(token, config.jwt.secret) as { userId: string; email: string };
+      const decoded = verifyAccessToken(token);
 
       const user = await prisma.user.findUnique({
         where: { id: decoded.userId },
-        select: { id: true, username: true, isActive: true, isBanned: true },
+        select: { id: true, username: true, avatar: true, isActive: true, isBanned: true },
       });
 
       if (!user || !user.isActive || user.isBanned) {
@@ -119,6 +166,8 @@ export function initializeSocketManager(io: Server): void {
 
       socket.userId = user.id;
       socket.username = user.username;
+      socket.avatar = user.avatar ?? undefined;
+      socket.tokenExpiresAt = decoded.exp * 1000;
       next();
     } catch (error) {
       next(new Error('Token invalide'));
@@ -128,8 +177,66 @@ export function initializeSocketManager(io: Server): void {
   // Initialiser les tables
   initializeTables();
 
-  io.on('connection', async (socket: AuthenticatedSocket) => {
-    console.log(`User connected: ${socket.username} (${socket.userId})`);
+  io.on('connection', (socket: AuthenticatedSocket) => {
+    let windowStart = Date.now();
+    let packets = 0;
+    let lastChat = 0;
+    let lastAuthorizationCheck = Date.now();
+    socket.use(async ([event, payload], next) => {
+      if (!socket.tokenExpiresAt || Date.now() >= socket.tokenExpiresAt) {
+        socket.emit('reconnect-required');
+        socket.disconnect(true);
+        return;
+      }
+      if (Date.now() - lastAuthorizationCheck >= SOCKET_AUTH_RECHECK_MS) {
+        try {
+          const user = await prisma.user.findUnique({
+            where: { id: socket.userId },
+            select: { isActive: true, isBanned: true },
+          });
+          if (!user || !user.isActive || user.isBanned) {
+            socket.emit('auth:revoked', { code: 'SESSION_REVOKED' });
+            socket.disconnect(true);
+            return;
+          }
+          lastAuthorizationCheck = Date.now();
+        } catch {
+          socket.emit('table:error', {
+            message: 'Vérification de session indisponible. Réessayez.',
+            code: 'AUTH_CHECK_FAILED',
+          });
+          return;
+        }
+      }
+      if (Date.now() - windowStart > 1000) {
+        windowStart = Date.now();
+        packets = 0;
+      }
+      if (++packets > 30) {
+        socket.emit('table:error', {
+          message: 'Trop de demandes. Réessayez.',
+          code: 'RATE_LIMITED',
+        });
+        return;
+      }
+      const schema = socketContracts[event];
+      if (schema && !schema.safeParse(payload).success) {
+        socket.emit('table:error', { message: 'Demande invalide', code: 'INVALID_INPUT' });
+        return;
+      }
+      if (event === 'global:chat-send' || event === 'chat:send') {
+        if (Date.now() - lastChat < 750) {
+          socket.emit('table:error', {
+            message: 'Patientez avant de renvoyer un message.',
+            code: 'RATE_LIMITED',
+          });
+          return;
+        }
+        lastChat = Date.now();
+      }
+      next();
+    });
+    debugLog('User connected');
 
     // Vérifier si c'est une reconnexion (joueur déjà à une table)
     let existingTableId = playerTables.get(socket.userId!);
@@ -140,7 +247,7 @@ export function initializeSocketManager(io: Server): void {
     if (existingTimer) {
       clearTimeout(existingTimer);
       disconnectTimers.delete(socket.userId!);
-      console.log(`[RECONNECT] Cancelled disconnect timer for ${socket.username}`);
+      debugLog('[RECONNECT] Cancelled disconnect timer');
     }
 
     // Si le joueur était à une table, vérifier qu'il y est vraiment encore
@@ -148,17 +255,17 @@ export function initializeSocketManager(io: Server): void {
       const table = activeTables.get(existingTableId);
       if (table) {
         const state = table.getState();
-        const playerInTable = state.players.find(p => p.odId === socket.userId);
+        const playerInTable = state.players.find((p) => p.odId === socket.userId);
         if (!playerInTable) {
           // Le joueur a été exclu de la table mais playerTables n'a pas été nettoyé
-          console.log(`[RECONNECT] ${socket.username} was in playerTables but not in actual table, cleaning up`);
+          debugLog('[RECONNECT] Stale player-table mapping removed');
           playerTables.delete(socket.userId!);
           existingTableId = undefined;
           isReconnecting = false;
         }
       } else {
         // La table n'existe plus
-        console.log(`[RECONNECT] Table ${existingTableId} no longer exists, cleaning up`);
+        debugLog('[RECONNECT] Table no longer exists, cleaning up');
         playerTables.delete(socket.userId!);
         existingTableId = undefined;
         isReconnecting = false;
@@ -168,29 +275,25 @@ export function initializeSocketManager(io: Server): void {
     // Si le joueur était à une table (et y est vraiment), le remettre dans la room socket
     if (existingTableId) {
       socket.join(`table:${existingTableId}`);
-      console.log(`[RECONNECT] ${socket.username} rejoined table room ${existingTableId}`);
+      debugLog('[RECONNECT] Player rejoined table room');
 
       // Redémarrer le timer si c'est le tour de ce joueur
       const table = activeTables.get(existingTableId);
       if (table) {
         const state = table.getState();
         if (state.currentPlayerId === socket.userId && !botManager.isBot(socket.userId!)) {
-          console.log(`[RECONNECT] Restarting timer for ${socket.username} (it's their turn)`);
+          debugLog('[RECONNECT] Restarting player timer');
           startTurnTimerForCurrentPlayer(table, existingTableId);
         }
       }
     }
 
     // === Chat Global: Ajouter l'utilisateur en ligne ===
-    const user = await prisma.user.findUnique({
-      where: { id: socket.userId },
-      select: { avatar: true },
-    });
 
     const userInfo: OnlineUserInfo = {
       odId: socket.userId!,
       username: socket.username!,
-      avatar: user?.avatar || undefined,
+      avatar: socket.avatar,
       status: isReconnecting ? 'playing' : 'lobby',
       tableId: existingTableId,
       socketId: socket.id,
@@ -205,7 +308,7 @@ export function initializeSocketManager(io: Server): void {
 
     // Si le joueur est déjà à une table (reconnexion), le rediriger
     if (isReconnecting && existingTableId) {
-      console.log(`[RECONNECT] ${socket.username} is already at table ${existingTableId}, sending redirect`);
+      debugLog('[RECONNECT] Redirecting player to active table');
       socket.emit('player:already-at-table', { tableId: existingTableId });
     } else {
       // Envoyer automatiquement les tables lors de la connexion
@@ -228,29 +331,29 @@ export function initializeSocketManager(io: Server): void {
 
     // Rejoindre le lobby
     socket.on('lobby:join', () => {
-      console.log(`[LOBBY] ${socket.username} joined lobby`);
+      debugLog('[LOBBY] Player joined');
       socket.join('lobby');
 
       // Vérifier si le joueur est déjà à une table
-      let existingTableId = playerTables.get(socket.userId!);
+      const existingTableId = playerTables.get(socket.userId!);
       if (existingTableId) {
         // Vérifier que le joueur est vraiment dans la table
         const table = activeTables.get(existingTableId);
         if (table) {
           const state = table.getState();
-          const playerInTable = state.players.find(p => p.odId === socket.userId);
+          const playerInTable = state.players.find((p) => p.odId === socket.userId);
           if (playerInTable) {
-            console.log(`[LOBBY] ${socket.username} is already at table ${existingTableId}, redirecting`);
+            debugLog('[LOBBY] Redirecting player to active table');
             socket.emit('player:already-at-table', { tableId: existingTableId });
             return;
           } else {
             // Le joueur a été exclu, nettoyer
-            console.log(`[LOBBY] ${socket.username} was in playerTables but not in table, cleaning up`);
+            debugLog('[LOBBY] Stale player-table mapping removed');
             playerTables.delete(socket.userId!);
           }
         } else {
           // La table n'existe plus
-          console.log(`[LOBBY] Table ${existingTableId} no longer exists, cleaning up`);
+          debugLog('[LOBBY] Table no longer exists, cleaning up');
           playerTables.delete(socket.userId!);
         }
       }
@@ -259,18 +362,18 @@ export function initializeSocketManager(io: Server): void {
     });
 
     socket.on('lobby:leave', () => {
-      console.log(`[LOBBY] ${socket.username} left lobby`);
+      debugLog('[LOBBY] Player left');
       socket.leave('lobby');
     });
 
     socket.on('lobby:get-tables', () => {
-      console.log(`[LOBBY] ${socket.username} requested tables`);
+      debugLog('[LOBBY] Tables requested');
       emitTablesUpdate(socket);
     });
 
     // Rejoindre une table
     socket.on('table:join', async (data: { tableId: string; buyIn: number }) => {
-      await handleJoinTable(io, socket, data);
+      await queueTable(data.tableId, () => handleJoinTable(io, socket, data));
     });
 
     // Quitter une table
@@ -284,7 +387,7 @@ export function initializeSocketManager(io: Server): void {
     });
 
     // Action de jeu
-    socket.on('game:action', (data: { tableId: string; action: any; amount?: number }) => {
+    socket.on('game:action', (data: { tableId: string; action: PlayerAction; amount?: number }) => {
       handleGameAction(io, socket, data);
     });
 
@@ -306,7 +409,7 @@ export function initializeSocketManager(io: Server): void {
     // Déconnexion
     socket.on('disconnect', () => {
       handleDisconnect(io, socket);
-      console.log(`User disconnected: ${socket.username}`);
+      debugLog('User disconnected');
     });
   });
 }
@@ -327,7 +430,7 @@ function initializeTables(): void {
 
     // Configurer le callback pour nouvelle main
     table.setOnNewHandCallback(() => {
-      console.log(`=== NEW HAND CALLBACK for table ${tableId} ===`);
+      debugLog('New hand callback');
 
       // Envoyer l'état à tous les joueurs
       const state = table.getState();
@@ -335,7 +438,7 @@ function initializeTables(): void {
         const playerSocket = findSocketByUserId(ioInstance, player.odId);
         if (playerSocket) {
           const playerState = table.getState(player.odId);
-          console.log(`New hand: sending to ${player.username}, actions=[${playerState.availableActions.join(', ')}]`);
+          debugLog(`New hand update, actions=[${playerState.availableActions.join(', ')}]`);
           playerSocket.emit('game:state-update', playerState);
         }
       }
@@ -355,7 +458,7 @@ function initializeTables(): void {
 
     activeTables.set(tableId, table);
   }
-  console.log(`Initialized ${activeTables.size} tables`);
+  debugLog(`Initialized ${activeTables.size} tables`);
 }
 
 function emitTablesUpdate(socket: Socket): void {
@@ -368,7 +471,7 @@ function emitTablesUpdate(socket: Socket): void {
     };
   });
 
-  console.log(`[LOBBY] Emitting tables-update to socket, ${tables.length} tables`);
+  debugLog(`[LOBBY] Emitting ${tables.length} table summaries`);
   socket.emit('lobby:tables-update', tables);
 }
 
@@ -391,7 +494,7 @@ function startTurnTimerForCurrentPlayer(table: PokerTable, tableId: string): voi
   }
 
   const playerId = state.currentPlayerId;
-  const player = state.players.find(p => p.odId === playerId);
+  const player = state.players.find((p) => p.odId === playerId);
 
   // Démarrer le timer pour le joueur humain
   turnTimerManager.startTimer({
@@ -401,14 +504,14 @@ function startTurnTimerForCurrentPlayer(table: PokerTable, tableId: string): voi
     io: ioInstance,
     onTimeout: () => {
       // Auto-fold quand le temps expire
-      console.log(`Auto-fold for player ${playerId} on table ${tableId} (timeout)`);
+      debugLog('Auto-fold after timeout');
 
       const currentTable = activeTables.get(tableId);
       if (!currentTable) return;
 
       // Incrémenter le compteur d'auto-folds consécutifs
       const consecutiveTimeouts = currentTable.incrementConsecutiveTimeouts(playerId);
-      console.log(`[AWAY] Player ${player?.username} has ${consecutiveTimeouts} consecutive timeouts`);
+      debugLog(`[AWAY] Consecutive timeouts: ${consecutiveTimeouts}`);
 
       // Vérifier si le joueur doit être marqué comme absent
       if (consecutiveTimeouts >= CONSECUTIVE_TIMEOUTS_THRESHOLD && !awayManager.isAway(playerId)) {
@@ -424,21 +527,17 @@ function startTurnTimerForCurrentPlayer(table: PokerTable, tableId: string): voi
             const tableForExclusion = activeTables.get(tableId);
             if (!tableForExclusion) return;
 
-            const playerState = tableForExclusion.getState().players.find(p => p.odId === playerId);
+            const playerState = tableForExclusion
+              .getState()
+              .players.find((p) => p.odId === playerId);
             if (!playerState) return;
 
             // Retirer le joueur de la table
             const removedPlayer = tableForExclusion.removePlayer(playerState.seatNumber);
             if (removedPlayer) {
               // Rendre les jetons au portefeuille
-              await prisma.wallet.update({
-                where: { userId: playerId },
-                data: {
-                  balance: { increment: removedPlayer.chipStack },
-                  frozenBalance: { decrement: removedPlayer.initialBuyIn },
-                },
-              });
-              console.log(`[AWAY] Auto-excluded ${player?.username} from table ${tableId}, returned ${removedPlayer.chipStack} chips`);
+              await returnChips(playerId, tableId, removedPlayer.chipStack);
+              debugLog('[AWAY] Auto-excluded player and returned reserved chips');
             }
 
             // Supprimer la relation joueur-table
@@ -454,7 +553,7 @@ function startTurnTimerForCurrentPlayer(table: PokerTable, tableId: string): voi
 
             // Mettre à jour le lobby
             ioInstance.to('lobby').emit('lobby:tables-update', getTablesInfo());
-          }
+          },
         );
       }
 
@@ -495,7 +594,7 @@ function startTurnTimerForCurrentPlayer(table: PokerTable, tableId: string): voi
 async function handleJoinTable(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { tableId: string; buyIn: number }
+  data: { tableId: string; buyIn: number },
 ): Promise<void> {
   const { tableId, buyIn } = data;
   const userId = socket.userId!;
@@ -504,7 +603,10 @@ async function handleJoinTable(
   try {
     // Vérifier si le joueur est déjà à une table
     if (playerTables.has(userId)) {
-      socket.emit('table:error', { message: 'Vous êtes déjà à une table', code: 'ALREADY_AT_TABLE' });
+      socket.emit('table:error', {
+        message: 'Vous êtes déjà à une table',
+        code: 'ALREADY_AT_TABLE',
+      });
       return;
     }
 
@@ -515,10 +617,14 @@ async function handleJoinTable(
       return;
     }
 
-    // Vérifier le solde
-    const wallet = await prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet || Number(wallet.balance) - Number(wallet.frozenBalance) < buyIn) {
-      socket.emit('table:error', { message: 'Solde insuffisant', code: 'INSUFFICIENT_BALANCE' });
+    const limits = TABLE_CONFIGS.find((t) => t.id === tableId);
+    if (
+      !limits ||
+      !Number.isSafeInteger(buyIn) ||
+      buyIn < limits.minBuyIn ||
+      buyIn > limits.maxBuyIn
+    ) {
+      socket.emit('table:error', { message: 'Montant du buy-in invalide', code: 'INVALID_BUY_IN' });
       return;
     }
 
@@ -538,22 +644,20 @@ async function handleJoinTable(
       return;
     }
 
-    // Déduire le buy-in du portefeuille
-    await prisma.wallet.update({
-      where: { userId },
-      data: {
-        balance: { decrement: buyIn },
-        frozenBalance: { increment: buyIn },
-      },
-    });
-
-    // Ajouter le joueur à la table
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { avatar: true },
-    });
-
-    table.addPlayer(userId, username, seatNumber, buyIn, user?.avatar || undefined);
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { avatar: true } });
+    const reservation = await walletService.reserveTable(userId, tableId, buyIn);
+    tableReservations.set(userId, { id: reservation.id, tableId });
+    if (
+      !socket.connected ||
+      !table.addPlayer(userId, username, seatNumber, buyIn, user?.avatar || undefined)
+    ) {
+      await returnChips(userId, tableId, buyIn);
+      socket.emit('table:error', {
+        message: 'La place n’est plus disponible. Aucun jeton débité.',
+        code: 'JOIN_FAILED',
+      });
+      return;
+    }
 
     // Enregistrer la relation joueur-table
     playerTables.set(userId, tableId);
@@ -566,9 +670,9 @@ async function handleJoinTable(
 
     // Envoyer l'état du jeu au joueur
     const joinedState = table.getState(userId);
-    console.log(`=== SENDING table:joined to ${username} ===`);
-    console.log(`Phase: ${joinedState.phase}, CurrentPlayerId: ${joinedState.currentPlayerId}`);
-    console.log(`AvailableActions: [${joinedState.availableActions.join(', ')}]`);
+    debugLog('Sending table:joined');
+    debugLog(`Phase: ${joinedState.phase}`);
+    debugLog(`AvailableActions: [${joinedState.availableActions.join(', ')}]`);
     socket.emit('table:joined', {
       tableId,
       gameState: joinedState,
@@ -588,16 +692,18 @@ async function handleJoinTable(
     // Mettre à jour le lobby
     io.to('lobby').emit('lobby:tables-update', getTablesInfo());
 
-    console.log(`${username} joined table ${tableId} at seat ${seatNumber}`);
+    for (const p of table.getState().players)
+      findSocketByUserId(io, p.odId)?.emit('game:state-update', table.getState(p.odId));
+    debugLog('Table join completed');
 
     // === BOT POUR TESTS ===
     // Ajouter un bot si c'est le seul joueur (pour pouvoir tester)
     const currentPlayerCount = table.getState().players.length;
-    if (currentPlayerCount === 1) {
+    if (config.enableBots && currentPlayerCount === 1) {
       // Ajouter un bot après un court délai
       setTimeout(() => {
-        const tableConfig = TABLE_CONFIGS.find(t => t.id === tableId);
-        if (tableConfig) {
+        const tableConfig = TABLE_CONFIGS.find((t) => t.id === tableId);
+        if (tableConfig && table.getState().players.length === 1) {
           const bot = botManager.addBotToTable(table, tableId, tableConfig.minBuyIn, io);
           if (bot) {
             // Envoyer l'état mis à jour à chaque joueur individuellement
@@ -628,15 +734,17 @@ async function handleJoinTable(
     }
     // === FIN BOT ===
   } catch (error) {
-    console.error('Error joining table:', error);
-    socket.emit('table:error', { message: 'Erreur lors de la connexion', code: 'JOIN_ERROR' });
+    socket.emit('table:error', {
+      message: error instanceof AppError ? error.message : 'Connexion impossible. Réessayez.',
+      code: error instanceof AppError ? error.code : 'JOIN_ERROR',
+    });
   }
 }
 
 async function handleLeaveTable(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { tableId: string; forceFold?: boolean }
+  data: { tableId: string; forceFold?: boolean },
 ): Promise<void> {
   const { tableId, forceFold } = data;
   const userId = socket.userId!;
@@ -648,7 +756,15 @@ async function handleLeaveTable(
     // Trouver le joueur et son siège
     const state = table.getState(userId);
     const playerInfo = state.players.find((p) => p.odId === userId);
-    if (!playerInfo) return;
+    if (!playerInfo) {
+      const pending = pendingSettlements.get(userId);
+      if (pending?.tableId === tableId) {
+        await returnChips(userId, tableId, pending.chipStack);
+        playerTables.delete(userId);
+        socket.emit('table:left', { tableId });
+      }
+      return;
+    }
 
     // Vérifier si le joueur peut quitter selon les règles du poker
     const leaveCheck = table.canPlayerLeave(userId);
@@ -657,7 +773,7 @@ async function handleLeaveTable(
       if (forceFold && state.phase !== 'waiting' && state.phase !== 'showdown') {
         // Forcer le fold du joueur
         table.forcePlayerFold(userId);
-        console.log(`[LEAVE] ${socket.username} forced fold before leaving table ${tableId}`);
+        debugLog('[LEAVE] Player forced fold before leaving');
 
         // Notifier les autres du fold
         io.to(`table:${tableId}`).emit('game:action-made', {
@@ -678,9 +794,10 @@ async function handleLeaveTable(
         // Refuser le départ
         socket.emit('table:leave-denied', {
           reason: leaveCheck.reason,
-          canForceFold: state.phase !== 'waiting' && state.phase !== 'showdown' && !playerInfo.isFolded,
+          canForceFold:
+            state.phase !== 'waiting' && state.phase !== 'showdown' && !playerInfo.isFolded,
         });
-        console.log(`[LEAVE] ${socket.username} denied leaving table ${tableId}: ${leaveCheck.reason}`);
+        debugLog(`[LEAVE] Leave denied: ${leaveCheck.reason}`);
         return;
       }
     }
@@ -692,13 +809,7 @@ async function handleLeaveTable(
     // Rendre les jetons au portefeuille
     // On utilise initialBuyIn pour le frozenBalance (ce qui a été gelé)
     // et chipStack pour le balance (ce que le joueur repart avec)
-    await prisma.wallet.update({
-      where: { userId },
-      data: {
-        balance: { increment: player.chipStack },
-        frozenBalance: { decrement: player.initialBuyIn },
-      },
-    });
+    await returnChips(userId, tableId, player.chipStack);
 
     // Supprimer la relation joueur-table
     playerTables.delete(userId);
@@ -721,16 +832,21 @@ async function handleLeaveTable(
     // Mettre à jour le lobby
     io.to('lobby').emit('lobby:tables-update', getTablesInfo());
 
-    console.log(`${socket.username} left table ${tableId}`);
+    for (const p of table.getState().players)
+      findSocketByUserId(io, p.odId)?.emit('game:state-update', table.getState(p.odId));
   } catch (error) {
-    console.error('Error leaving table:', error);
+    console.error('Table settlement failed');
+    socket.emit('table:error', {
+      message: 'Retour des jetons en attente. Réessayez de quitter la table.',
+      code: 'SETTLEMENT_PENDING',
+    });
   }
 }
 
 function handleGameAction(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { tableId: string; action: any; amount?: number }
+  data: { tableId: string; action: PlayerAction; amount?: number },
 ): void {
   const { tableId, action, amount } = data;
   const userId = socket.userId!;
@@ -741,8 +857,11 @@ function handleGameAction(
     return;
   }
 
-  // Arrêter le timer du joueur actuel
-  turnTimerManager.clearTableTimers(tableId);
+  // Invalid actions must not stop another player's clock.
+  if (playerTables.get(userId) !== tableId || table.getState().currentPlayerId !== userId) {
+    socket.emit('table:error', { message: 'Ce n’est pas votre tour', code: 'INVALID_ACTION' });
+    return;
+  }
 
   // Réinitialiser le compteur d'auto-folds (le joueur a joué manuellement)
   table.resetConsecutiveTimeouts(userId);
@@ -759,6 +878,8 @@ function handleGameAction(
     socket.emit('table:error', { message: 'Action invalide', code: 'INVALID_ACTION' });
     return;
   }
+
+  turnTimerManager.clearTableTimers(tableId);
 
   // Notifier tous les joueurs de l'action
   io.to(`table:${tableId}`).emit('game:action-made', {
@@ -803,10 +924,7 @@ function handleGameAction(
   }
 }
 
-function handleGetTableState(
-  socket: AuthenticatedSocket,
-  data: { tableId: string }
-): void {
+function handleGetTableState(socket: AuthenticatedSocket, data: { tableId: string }): void {
   const { tableId } = data;
   const userId = socket.userId!;
 
@@ -819,18 +937,21 @@ function handleGetTableState(
   // Vérifier si le joueur est à cette table (dans playerTables)
   const currentTableId = playerTables.get(userId);
   if (currentTableId !== tableId) {
-    socket.emit('table:error', { message: 'Vous n\'êtes pas à cette table', code: 'NOT_AT_TABLE' });
+    socket.emit('table:error', { message: "Vous n'êtes pas à cette table", code: 'NOT_AT_TABLE' });
     return;
   }
 
   // Vérifier que le joueur est vraiment dans la table (pas exclu)
   const state = table.getState();
-  const playerInTable = state.players.find(p => p.odId === userId);
+  const playerInTable = state.players.find((p) => p.odId === userId);
   if (!playerInTable) {
     // Le joueur a été exclu, nettoyer et rediriger
-    console.log(`[TABLE:GET-STATE] ${socket.username} was in playerTables but not in table, cleaning up`);
+    debugLog('[TABLE:GET-STATE] Stale player-table mapping removed');
     playerTables.delete(userId);
-    socket.emit('table:error', { message: 'Vous avez été exclu de cette table', code: 'EXCLUDED_FROM_TABLE' });
+    socket.emit('table:error', {
+      message: 'Vous avez été exclu de cette table',
+      code: 'EXCLUDED_FROM_TABLE',
+    });
     socket.emit('table:left', { tableId });
     return;
   }
@@ -843,7 +964,7 @@ function handleGetTableState(
 
   // Si c'est le tour de ce joueur, s'assurer que le timer est actif
   if (state.currentPlayerId === userId && !botManager.isBot(userId)) {
-    console.log(`[TABLE:GET-STATE] Ensuring timer is running for ${socket.username}`);
+    debugLog('[TABLE:GET-STATE] Ensuring timer is running');
     startTurnTimerForCurrentPlayer(table, tableId);
   }
 }
@@ -851,12 +972,12 @@ function handleGetTableState(
 function handleChatMessage(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { tableId: string; message: string }
+  data: { tableId: string; message: string },
 ): void {
   const { tableId, message } = data;
 
   // Filtrer les messages (longueur max, pas de spam, etc.)
-  if (message.length > 200) return;
+  if (message.length > 200 || playerTables.get(socket.userId!) !== tableId) return;
 
   io.to(`table:${tableId}`).emit('chat:message', {
     odId: socket.userId!,
@@ -868,9 +989,16 @@ function handleChatMessage(
 
 async function handleDisconnect(io: Server, socket: AuthenticatedSocket): Promise<void> {
   const userId = socket.userId;
-  const username = socket.username;
   if (!userId) return;
 
+  const remainingSocket = findSocketByUserId(io, userId);
+  if (remainingSocket) {
+    const online = onlineUsers.get(userId);
+    if (online) online.socketId = remainingSocket.id;
+    return;
+  }
+  const previousTimer = disconnectTimers.get(userId);
+  if (previousTimer) clearTimeout(previousTimer);
   // === Chat Global: Retirer l'utilisateur de la liste en ligne ===
   onlineUsers.delete(userId);
   io.to('global-chat').emit('users:update', getOnlineUsersList());
@@ -879,7 +1007,7 @@ async function handleDisconnect(io: Server, socket: AuthenticatedSocket): Promis
   if (tableId) {
     // Au lieu de retirer immédiatement, on démarre un timer de grâce
     // pour permettre au joueur de se reconnecter (navigation entre pages, etc.)
-    console.log(`[DISCONNECT] ${username} disconnected from table ${tableId}, starting ${DISCONNECT_GRACE_PERIOD_MS / 1000}s grace period`);
+    debugLog(`[DISCONNECT] Starting ${DISCONNECT_GRACE_PERIOD_MS / 1000}s settlement grace period`);
 
     const disconnectTimer = setTimeout(async () => {
       // Le timer a expiré, retirer vraiment le joueur
@@ -900,14 +1028,8 @@ async function handleDisconnect(io: Server, socket: AuthenticatedSocket): Promis
               // Rendre les jetons au portefeuille
               // On utilise initialBuyIn pour le frozenBalance (ce qui a été gelé)
               // et chipStack pour le balance (ce que le joueur repart avec)
-              await prisma.wallet.update({
-                where: { userId },
-                data: {
-                  balance: { increment: player.chipStack },
-                  frozenBalance: { decrement: player.initialBuyIn },
-                },
-              });
-              console.log(`[DISCONNECT] Grace period expired. Returned ${player.chipStack} chips to ${username} (frozen: ${player.initialBuyIn})`);
+              await returnChips(userId, tableId, player.chipStack);
+              debugLog('[DISCONNECT] Grace period expired; reserved chips settled');
             }
           }
         }
@@ -924,9 +1046,14 @@ async function handleDisconnect(io: Server, socket: AuthenticatedSocket): Promis
         // Mettre à jour le lobby
         io.to('lobby').emit('lobby:tables-update', getTablesInfo());
 
-        console.log(`[DISCONNECT] Player ${username} removed from table ${tableId} after grace period`);
+        debugLog('[DISCONNECT] Player removed after grace period');
       } catch (error) {
-        console.error('Error handling disconnect after grace period:', error);
+        console.error(
+          JSON.stringify({
+            event: 'socket.disconnect_settlement_failed',
+            type: error instanceof Error ? error.name : 'UnknownError',
+          }),
+        );
       }
     }, DISCONNECT_GRACE_PERIOD_MS);
 
@@ -964,7 +1091,7 @@ function updateUserStatus(userId: string, status: 'lobby' | 'playing', tableId?:
 function handlePlayerReturn(
   io: Server,
   socket: AuthenticatedSocket,
-  data: { tableId: string }
+  data: { tableId: string },
 ): void {
   const { tableId } = data;
   const userId = socket.userId!;
@@ -977,7 +1104,7 @@ function handlePlayerReturn(
 
   // Vérifier si le joueur est marqué comme absent
   if (!awayManager.isAway(userId)) {
-    socket.emit('player:return-error', { message: 'Vous n\'êtes pas marqué comme absent' });
+    socket.emit('player:return-error', { message: "Vous n'êtes pas marqué comme absent" });
     return;
   }
 
@@ -996,7 +1123,7 @@ function handlePlayerReturn(
     }
 
     socket.emit('player:return-success', { message: 'Bienvenue de retour!' });
-    console.log(`[AWAY] Player ${socket.username} returned to table ${tableId}`);
+    debugLog('[AWAY] Player returned to table');
   }
 }
 

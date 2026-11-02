@@ -202,7 +202,13 @@ export class HandEvaluator {
     const values = sortedCards.map((c) => c.getValue());
 
     // Cas spécial: A-2-3-4-5 (roue)
-    if (values[0] === 14 && values[1] === 5 && values[2] === 4 && values[3] === 3 && values[4] === 2) {
+    if (
+      values[0] === 14 &&
+      values[1] === 5 &&
+      values[2] === 4 &&
+      values[3] === 3 &&
+      values[4] === 2
+    ) {
       return true;
     }
 

@@ -12,7 +12,7 @@ export interface AdminRequest extends AuthRequest {
 export const requireAdmin = async (
   req: AdminRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     if (!req.userId) {
@@ -42,8 +42,8 @@ export const requireAdmin = async (
 
     req.adminRole = user.role as 'ADMIN' | 'SUPER_ADMIN';
     next();
-  } catch (error) {
-    console.error('Admin middleware error:', error);
+  } catch {
+    console.error(JSON.stringify({ event: 'admin.authorization_failed' }));
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };
@@ -54,7 +54,7 @@ export const requireAdmin = async (
 export const requireSuperAdmin = async (
   req: AdminRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     if (!req.userId) {
@@ -84,8 +84,8 @@ export const requireSuperAdmin = async (
 
     req.adminRole = 'SUPER_ADMIN';
     next();
-  } catch (error) {
-    console.error('Super admin middleware error:', error);
+  } catch {
+    console.error(JSON.stringify({ event: 'super_admin.authorization_failed' }));
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };

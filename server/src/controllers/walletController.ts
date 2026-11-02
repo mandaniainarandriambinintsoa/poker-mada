@@ -4,23 +4,37 @@ import { PaymentProvider, TransactionType, TransactionStatus } from '@prisma/cli
 import { walletService } from '../services/walletService';
 import { AuthRequest } from '../middleware/authMiddleware';
 
+export const requestKeySchema = z.string().uuid('Idempotency-Key requis');
+
 // Schémas de validation
-export const depositSchema = z.object({
-  amount: z.number().min(1000, 'Montant minimum: 1000 Ar'),
-  provider: z.enum(['ORANGE_MONEY', 'MVOLA', 'AIRTEL_MONEY']),
-  phone: z.string().regex(/^0(32|33|34|37|38)\d{7}$/, 'Numéro invalide'),
-});
+export const depositSchema = z
+  .object({
+    amount: z.number().int().max(100_000_000).min(1000, 'Montant minimum: 1000 Ar'),
+    provider: z.enum(['ORANGE_MONEY', 'MVOLA', 'AIRTEL_MONEY']),
+    phone: z
+      .string()
+      .trim()
+      .regex(/^0(32|33|34|37|38)\d{7}$/, 'Numéro invalide'),
+  })
+  .strict();
 
-export const withdrawSchema = z.object({
-  amount: z.number().min(5000, 'Montant minimum: 5000 Ar'),
-  provider: z.enum(['ORANGE_MONEY', 'MVOLA', 'AIRTEL_MONEY']),
-  phone: z.string().regex(/^0(32|33|34|37|38)\d{7}$/, 'Numéro invalide'),
-});
+export const withdrawSchema = z
+  .object({
+    amount: z.number().int().max(100_000_000).min(5000, 'Montant minimum: 5000 Ar'),
+    provider: z.enum(['ORANGE_MONEY', 'MVOLA', 'AIRTEL_MONEY']),
+    phone: z
+      .string()
+      .trim()
+      .regex(/^0(32|33|34|37|38)\d{7}$/, 'Numéro invalide'),
+  })
+  .strict();
 
-export const confirmDepositSchema = z.object({
-  transactionId: z.string().uuid(),
-  externalRef: z.string().min(1),
-});
+export const confirmDepositSchema = z
+  .object({
+    transactionId: z.string().uuid(),
+    externalRef: z.string().trim().min(1).max(120),
+  })
+  .strict();
 
 export class WalletController {
   async getBalance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -35,17 +49,15 @@ export class WalletController {
 
   async getTransactions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const userId = req.userId!;
-      const { page, limit, type, status } = req.query;
-
-      const result = await walletService.getTransactions(userId, {
-        page: page ? parseInt(page as string, 10) : undefined,
-        limit: limit ? parseInt(limit as string, 10) : undefined,
-        type: type as TransactionType | undefined,
-        status: status as TransactionStatus | undefined,
-      });
-
-      res.json(result);
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).max(100000).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(20),
+          type: z.nativeEnum(TransactionType).optional(),
+          status: z.nativeEnum(TransactionStatus).optional(),
+        })
+        .parse(req.query);
+      res.json(await walletService.getTransactions(req.userId!, query));
     } catch (error) {
       next(error);
     }
@@ -60,7 +72,8 @@ export class WalletController {
         userId,
         amount,
         provider as PaymentProvider,
-        phone
+        phone,
+        requestKeySchema.parse(req.get('Idempotency-Key')),
       );
 
       res.json({
@@ -76,7 +89,12 @@ export class WalletController {
     try {
       const { transactionId, externalRef } = req.body;
 
-      const result = await walletService.confirmDeposit(transactionId, externalRef);
+      const result = await walletService.settlePayment(
+        transactionId,
+        req.userId!,
+        'COMPLETED',
+        externalRef,
+      );
 
       res.json({
         message: 'Dépôt confirmé',
@@ -96,7 +114,8 @@ export class WalletController {
         userId,
         amount,
         provider as PaymentProvider,
-        phone
+        phone,
+        requestKeySchema.parse(req.get('Idempotency-Key')),
       );
 
       res.json({

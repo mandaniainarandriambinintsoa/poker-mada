@@ -15,32 +15,45 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "test": "jest"
+    "test": "node --test tests/unit.test.cjs tests/security.test.cjs",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "lint": "eslint src --ext ts --max-warnings 0",
+    "test:integration": "node --test tests/wallet.integration.test.cjs",
+    "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
-    "@supabase/supabase-js": "^2.91.1",
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.11.24",
-    "@types/uuid": "^9.0.8",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.18.3",
+    "express": "^4.22.3",
     "express-rate-limit": "^7.2.0",
+    "google-auth-library": "^10.9.1",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "prisma": "^5.10.0",
     "socket.io": "^4.7.4",
     "typescript": "^5.3.3",
-    "uuid": "^9.0.1",
-    "zod": "^3.22.4"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
     "nodemon": "^3.1.0",
+    "prettier": "^3.9.9",
     "ts-node": "^10.9.2"
+  },
+  "engines": {
+    "node": ">=22.12.0 <25"
   }
 }

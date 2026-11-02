@@ -42,7 +42,6 @@ class TurnTimerManager {
 
     // Timer principal pour l'auto-fold
     const timer = setTimeout(() => {
-      console.log(`Timer expired for player ${config.playerId} on table ${config.tableId}`);
       this.clearTimerByKey(timerKey);
       config.onTimeout();
     }, config.timeoutSeconds * 1000);

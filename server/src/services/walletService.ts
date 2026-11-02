@@ -1,48 +1,42 @@
-import { Prisma, TransactionType, TransactionStatus, PaymentProvider } from '@prisma/client';
+import { PaymentProvider, Prisma, TransactionStatus, TransactionType } from '@prisma/client';
 import { prisma } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
+import { ledgerTransaction, lockWallet, money } from './walletLedger';
 
 export class WalletService {
   async getBalance(userId: string) {
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId },
-    });
-
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    const balance = Number(wallet.balance);
-    const frozenBalance = Number(wallet.frozenBalance);
-
+    const [wallet, pending] = await prisma.$transaction(
+      [
+        prisma.wallet.findUnique({ where: { userId } }),
+        prisma.transaction.aggregate({
+          where: { userId, type: 'WITHDRAWAL', status: { in: ['PENDING', 'PROCESSING'] } },
+          _sum: { amount: true },
+        }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+    if (!wallet) throw new AppError('Portefeuille introuvable', 404, 'WALLET_NOT_FOUND');
+    const withdrawalReserved = Number(pending._sum.amount ?? 0);
     return {
-      balance,
-      frozenBalance,
-      availableBalance: balance - frozenBalance,
+      balance: Number(wallet.balance),
+      frozenBalance: Number(wallet.frozenBalance),
+      availableBalance: Number(wallet.balance.minus(wallet.frozenBalance)),
+      withdrawalReserved,
+      tableReserved: Math.max(0, Number(wallet.frozenBalance) - withdrawalReserved),
     };
   }
 
   async getTransactions(
     userId: string,
-    options: {
-      page?: number;
-      limit?: number;
-      type?: TransactionType;
-      status?: TransactionStatus;
-    }
+    options: { page?: number; limit?: number; type?: TransactionType; status?: TransactionStatus },
   ) {
     const { page = 1, limit = 20, type, status } = options;
-    const skip = (page - 1) * limit;
-
-    const where: Prisma.TransactionWhereInput = { userId };
-    if (type) where.type = type;
-    if (status) where.status = status;
-
+    const where: Prisma.TransactionWhereInput = { userId, type, status };
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
-        skip,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * limit,
         take: limit,
         select: {
           id: true,
@@ -53,15 +47,18 @@ export class WalletService {
           description: true,
           createdAt: true,
           completedAt: true,
+          balanceBefore: true,
+          balanceAfter: true,
         },
       }),
       prisma.transaction.count({ where }),
     ]);
-
     return {
       transactions: transactions.map((t) => ({
         ...t,
         amount: Number(t.amount),
+        balanceBefore: Number(t.balanceBefore),
+        balanceAfter: Number(t.balanceAfter),
       })),
       total,
       page,
@@ -69,91 +66,91 @@ export class WalletService {
     };
   }
 
+  private async initiatePayment(
+    userId: string,
+    amount: number,
+    provider: PaymentProvider,
+    phone: string,
+    type: 'DEPOSIT' | 'WITHDRAWAL',
+    requestId?: string,
+  ) {
+    const value = money(amount, type === 'DEPOSIT' ? 1000 : 5000);
+    return ledgerTransaction(async (tx) => {
+      const wallet = await lockWallet(tx, userId);
+      const requestKey = requestId ? `${userId}:${requestId}` : undefined;
+      if (requestKey) {
+        const existing = await tx.transaction.findUnique({ where: { requestKey } });
+        if (existing) {
+          if (
+            existing.type !== type ||
+            !existing.amount.equals(value) ||
+            existing.paymentProvider !== provider ||
+            existing.phoneNumber !== phone
+          ) {
+            throw new AppError(
+              'Cette demande correspond à une autre opération',
+              409,
+              'IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return existing;
+        }
+      }
+      if (type === 'WITHDRAWAL') {
+        if (wallet.balance.minus(wallet.frozenBalance).lessThan(value))
+          throw new AppError('Solde disponible insuffisant', 400, 'INSUFFICIENT_BALANCE');
+        await tx.wallet.update({
+          where: { userId },
+          data: { frozenBalance: { increment: value } },
+        });
+      }
+      return tx.transaction.create({
+        data: {
+          userId,
+          type,
+          amount: value,
+          status: 'PENDING',
+          requestKey,
+          balanceBefore: wallet.balance,
+          balanceAfter: wallet.balance,
+          paymentProvider: provider,
+          phoneNumber: phone,
+          description: type === 'DEPOSIT' ? 'Demande de dépôt' : 'Demande de retrait',
+        },
+      });
+    });
+  }
+
   async initiateDeposit(
     userId: string,
     amount: number,
     provider: PaymentProvider,
-    phone: string
+    phone: string,
+    requestId?: string,
   ) {
-    // Vérifier le montant minimum
-    if (amount < 1000) {
-      throw new AppError('Le montant minimum est de 1000 Ar', 400, 'MIN_AMOUNT');
-    }
-
-    // Récupérer le solde actuel
-    const wallet = await prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // Créer la transaction en attente
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId,
-        type: TransactionType.DEPOSIT,
-        amount,
-        balanceBefore: wallet.balance,
-        balanceAfter: wallet.balance, // Sera mis à jour après confirmation
-        status: TransactionStatus.PENDING,
-        paymentProvider: provider,
-        phoneNumber: phone,
-        description: `Dépôt via ${provider}`,
-      },
-    });
-
-    // Ici on intégrerait l'API Mobile Money
-    // Pour l'instant, on retourne les informations pour le paiement manuel
+    const transaction = await this.initiatePayment(
+      userId,
+      amount,
+      provider,
+      phone,
+      'DEPOSIT',
+      requestId,
+    );
     return {
       transactionId: transaction.id,
       amount,
       provider,
-      status: 'PENDING',
-      instructions: this.getPaymentInstructions(provider, amount, transaction.id),
-    };
-  }
-
-  async confirmDeposit(transactionId: string, externalRef: string) {
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: transactionId },
-      include: { user: { include: { wallet: true } } },
-    });
-
-    if (!transaction) {
-      throw new AppError('Transaction non trouvée', 404, 'TRANSACTION_NOT_FOUND');
-    }
-
-    if (transaction.status !== TransactionStatus.PENDING) {
-      throw new AppError('Transaction déjà traitée', 400, 'TRANSACTION_ALREADY_PROCESSED');
-    }
-
-    const wallet = transaction.user.wallet;
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // Mettre à jour le portefeuille et la transaction atomiquement
-    const [updatedWallet, updatedTransaction] = await prisma.$transaction([
-      prisma.wallet.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { increment: transaction.amount },
-        },
-      }),
-      prisma.transaction.update({
-        where: { id: transactionId },
-        data: {
-          status: TransactionStatus.COMPLETED,
-          externalRef,
-          balanceAfter: Prisma.Decimal.add(wallet.balance, transaction.amount),
-          completedAt: new Date(),
-        },
-      }),
-    ]);
-
-    return {
-      success: true,
-      newBalance: Number(updatedWallet.balance),
-      transaction: updatedTransaction,
+      status: transaction.status,
+      instructions: {
+        type: 'manual',
+        reference: transaction.id,
+        code: '',
+        steps: [
+          'Votre demande est enregistrée. Aucun paiement n’a encore été effectué.',
+          'Contactez l’équipe pour obtenir les coordonnées de paiement vérifiées.',
+          'Le solde sera crédité après vérification du paiement par un administrateur.',
+        ],
+      },
     };
   }
 
@@ -161,176 +158,216 @@ export class WalletService {
     userId: string,
     amount: number,
     provider: PaymentProvider,
-    phone: string
+    phone: string,
+    requestId?: string,
   ) {
-    // Vérifier le montant minimum
-    if (amount < 5000) {
-      throw new AppError('Le montant minimum de retrait est de 5000 Ar', 400, 'MIN_WITHDRAWAL');
-    }
-
-    // Vérifier le solde disponible
-    const balance = await this.getBalance(userId);
-    if (balance.availableBalance < amount) {
-      throw new AppError('Solde insuffisant', 400, 'INSUFFICIENT_BALANCE');
-    }
-
-    const wallet = await prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // Créer la transaction et geler le montant
-    const [transaction] = await prisma.$transaction([
-      prisma.transaction.create({
-        data: {
-          userId,
-          type: TransactionType.WITHDRAWAL,
-          amount,
-          balanceBefore: wallet.balance,
-          balanceAfter: Prisma.Decimal.sub(wallet.balance, new Prisma.Decimal(amount)),
-          status: TransactionStatus.PROCESSING,
-          paymentProvider: provider,
-          phoneNumber: phone,
-          description: `Retrait vers ${provider} - ${phone}`,
-        },
-      }),
-      prisma.wallet.update({
-        where: { userId },
-        data: {
-          frozenBalance: { increment: amount },
-        },
-      }),
-    ]);
-
-    return {
-      transactionId: transaction.id,
+    const transaction = await this.initiatePayment(
+      userId,
       amount,
       provider,
       phone,
-      status: 'PROCESSING',
-      estimatedTime: '24-48 heures',
-    };
+      'WITHDRAWAL',
+      requestId,
+    );
+    return { transactionId: transaction.id, amount, provider, phone, status: transaction.status };
   }
 
-  async deductForTableBuyIn(userId: string, amount: number, gameSessionId: string) {
-    const balance = await this.getBalance(userId);
-
-    if (balance.availableBalance < amount) {
-      throw new AppError('Solde insuffisant pour rejoindre la table', 400, 'INSUFFICIENT_BALANCE');
-    }
-
-    const wallet = await prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // Déduire et geler le montant
-    const [updatedWallet, transaction] = await prisma.$transaction([
-      prisma.wallet.update({
-        where: { userId },
+  async settlePayment(
+    transactionId: string,
+    adminId: string,
+    outcome: 'COMPLETED' | 'FAILED',
+    externalRef?: string,
+    reason?: string,
+  ) {
+    return ledgerTransaction(async (tx) => {
+      const initial = await tx.transaction.findUnique({ where: { id: transactionId } });
+      if (!initial || !['DEPOSIT', 'WITHDRAWAL'].includes(initial.type))
+        throw new AppError('Opération de paiement introuvable', 404, 'PAYMENT_NOT_FOUND');
+      const wallet = await lockWallet(tx, initial.userId);
+      const transaction = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+      if (transaction.status === outcome)
+        return { success: true, alreadyProcessed: true, newBalance: Number(wallet.balance) };
+      if (!['PENDING', 'PROCESSING'].includes(transaction.status))
+        throw new AppError('Opération déjà traitée', 409, 'ALREADY_PROCESSED');
+      const reference = externalRef?.trim();
+      if (outcome === 'COMPLETED' && !reference)
+        throw new AppError(
+          'La référence du paiement vérifié est requise',
+          400,
+          'PAYMENT_REFERENCE_REQUIRED',
+        );
+      if (outcome === 'FAILED' && !reason?.trim())
+        throw new AppError('Indiquez le motif du refus', 400, 'REASON_REQUIRED');
+      if (
+        reference &&
+        (await tx.transaction.findFirst({
+          where: {
+            paymentProvider: transaction.paymentProvider,
+            externalRef: reference,
+            id: { not: transactionId },
+          },
+          select: { id: true },
+        }))
+      ) {
+        throw new AppError(
+          'Cette référence de paiement est déjà utilisée',
+          409,
+          'DUPLICATE_REFERENCE',
+        );
+      }
+      const withdrawal = transaction.type === 'WITHDRAWAL';
+      if (withdrawal && wallet.frozenBalance.lessThan(transaction.amount))
+        throw new AppError(
+          'Réserve incohérente : vérification nécessaire',
+          409,
+          'RESERVATION_MISMATCH',
+        );
+      const balance =
+        outcome === 'COMPLETED'
+          ? withdrawal
+            ? wallet.balance.minus(transaction.amount)
+            : wallet.balance.plus(transaction.amount)
+          : wallet.balance;
+      const frozenBalance = withdrawal
+        ? wallet.frozenBalance.minus(transaction.amount)
+        : wallet.frozenBalance;
+      await tx.wallet.update({
+        where: { userId: transaction.userId },
+        data: { balance, frozenBalance },
+      });
+      await tx.transaction.update({
+        where: { id: transactionId },
         data: {
-          balance: { decrement: amount },
-          frozenBalance: { increment: amount },
+          status: outcome,
+          externalRef: outcome === 'COMPLETED' ? reference : undefined,
+          balanceBefore: wallet.balance,
+          balanceAfter: balance,
+          completedAt: new Date(),
+          description: outcome === 'FAILED' ? `Refus : ${reason}` : transaction.description,
         },
-      }),
-      prisma.transaction.create({
+      });
+      await tx.adminAuditLog.create({
+        data: {
+          adminId,
+          action: outcome === 'COMPLETED' ? 'COMPLETE_TRANSACTION' : 'FAIL_TRANSACTION',
+          targetType: 'TRANSACTION',
+          targetId: transactionId,
+          details: {
+            amount: Number(transaction.amount),
+            type: transaction.type,
+            reason: reason ?? null,
+          },
+        },
+      });
+      return { success: true, alreadyProcessed: false, newBalance: Number(balance) };
+    });
+  }
+
+  async reserveTable(userId: string, tableId: string, amount: number) {
+    const value = money(amount, 1);
+    return ledgerTransaction(async (tx) => {
+      const wallet = await lockWallet(tx, userId);
+      if (
+        await tx.transaction.findFirst({
+          where: { userId, type: 'TABLE_BUY_IN', status: 'PROCESSING' },
+          select: { id: true },
+        })
+      )
+        throw new AppError('Une entrée en table est déjà réservée', 409, 'ALREADY_AT_TABLE');
+      if (wallet.balance.minus(wallet.frozenBalance).lessThan(value))
+        throw new AppError('Solde disponible insuffisant', 400, 'INSUFFICIENT_BALANCE');
+      await tx.wallet.update({ where: { userId }, data: { frozenBalance: { increment: value } } });
+      return tx.transaction.create({
         data: {
           userId,
-          type: TransactionType.TABLE_BUY_IN,
-          amount,
+          type: 'TABLE_BUY_IN',
+          status: 'PROCESSING',
+          amount: value,
           balanceBefore: wallet.balance,
-          balanceAfter: Prisma.Decimal.sub(wallet.balance, new Prisma.Decimal(amount)),
-          status: TransactionStatus.COMPLETED,
-          gameSessionId,
-          description: 'Entrée en table',
-          completedAt: new Date(),
+          balanceAfter: wallet.balance,
+          metadata: { tableId },
+          description: 'Jetons réservés pour une table',
         },
-      }),
-    ]);
-
-    return {
-      success: true,
-      newBalance: Number(updatedWallet.balance),
-      frozenBalance: Number(updatedWallet.frozenBalance),
-      transactionId: transaction.id,
-    };
+      });
+    });
   }
 
-  async cashOutFromTable(userId: string, chipStack: number, gameSessionId: string) {
-    const wallet = await prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // Retourner les jetons au portefeuille
-    const [updatedWallet, transaction] = await prisma.$transaction([
-      prisma.wallet.update({
-        where: { userId },
-        data: {
-          balance: { increment: chipStack },
-          frozenBalance: { decrement: chipStack },
+  async settleTable(userId: string, tableId: string, reservationId: string, chipStack: number) {
+    const chips = money(chipStack);
+    return ledgerTransaction(async (tx) => {
+      const wallet = await lockWallet(tx, userId);
+      const reservation = await tx.transaction.findFirst({
+        where: {
+          id: reservationId,
+          userId,
+          type: 'TABLE_BUY_IN',
+          metadata: { path: ['tableId'], equals: tableId },
         },
-      }),
-      prisma.transaction.create({
+      });
+      if (!reservation) throw new AppError('Réservation introuvable', 409, 'RESERVATION_MISSING');
+      if (reservation.status === 'COMPLETED') return;
+      if (reservation.status !== 'PROCESSING' || wallet.frozenBalance.lessThan(reservation.amount))
+        throw new AppError('Réservation incohérente', 409, 'RESERVATION_MISMATCH');
+      const balance = wallet.balance.minus(reservation.amount).plus(chips);
+      await tx.wallet.update({
+        where: { userId },
+        data: { balance, frozenBalance: { decrement: reservation.amount } },
+      });
+      await tx.transaction.update({
+        where: { id: reservation.id },
+        data: { status: 'COMPLETED', completedAt: new Date() },
+      });
+      await tx.transaction.create({
         data: {
           userId,
-          type: TransactionType.TABLE_CASH_OUT,
-          amount: chipStack,
+          type: 'TABLE_CASH_OUT',
+          status: 'COMPLETED',
+          amount: chips,
           balanceBefore: wallet.balance,
-          balanceAfter: Prisma.Decimal.add(wallet.balance, new Prisma.Decimal(chipStack)),
-          status: TransactionStatus.COMPLETED,
-          gameSessionId,
-          description: 'Sortie de table',
+          balanceAfter: balance,
+          metadata: { tableId, reservationId },
+          description: 'Retour de table',
           completedAt: new Date(),
         },
-      }),
-    ]);
-
-    return {
-      success: true,
-      newBalance: Number(updatedWallet.balance),
-      transactionId: transaction.id,
-    };
+      });
+    });
   }
 
-  private getPaymentInstructions(provider: PaymentProvider, amount: number, reference: string) {
-    switch (provider) {
-      case PaymentProvider.ORANGE_MONEY:
-        return {
-          type: 'ussd',
-          code: `*144*1*1*POKERMADA*${amount}#`,
-          reference,
-          steps: [
-            'Composez le code USSD ci-dessus',
-            'Entrez votre code PIN Orange Money',
-            'Confirmez le paiement',
-          ],
-        };
-      case PaymentProvider.MVOLA:
-        return {
-          type: 'ussd',
-          code: `*111*1*2*POKERMADA*${amount}#`,
-          reference,
-          steps: [
-            'Composez le code USSD ci-dessus',
-            'Entrez votre code PIN MVola',
-            'Confirmez le paiement',
-          ],
-        };
-      case PaymentProvider.AIRTEL_MONEY:
-        return {
-          type: 'ussd',
-          code: `*444*1*1*POKERMADA*${amount}#`,
-          reference,
-          steps: [
-            'Composez le code USSD ci-dessus',
-            'Entrez votre code PIN Airtel Money',
-            'Confirmez le paiement',
-          ],
-        };
-      default:
-        return null;
-    }
+  async adjustBalance(adminId: string, userId: string, amount: number, reason: string) {
+    money(Math.abs(amount), 1);
+    return ledgerTransaction(async (tx) => {
+      const wallet = await lockWallet(tx, userId);
+      const balance = wallet.balance.plus(amount);
+      if (balance.lessThan(wallet.frozenBalance))
+        throw new AppError(
+          'Les fonds réservés ne peuvent pas être retirés',
+          400,
+          'INSUFFICIENT_BALANCE',
+        );
+      await tx.wallet.update({ where: { userId }, data: { balance } });
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: amount > 0 ? 'BONUS' : 'REFUND',
+          amount: Math.abs(amount),
+          status: 'COMPLETED',
+          balanceBefore: wallet.balance,
+          balanceAfter: balance,
+          description: reason,
+          completedAt: new Date(),
+        },
+      });
+      await tx.adminAuditLog.create({
+        data: {
+          adminId,
+          action: 'ADJUST_BALANCE',
+          targetType: 'WALLET',
+          targetId: wallet.id,
+          details: { amount, reason },
+        },
+      });
+      return { success: true, newBalance: Number(balance) };
+    });
   }
 }
 

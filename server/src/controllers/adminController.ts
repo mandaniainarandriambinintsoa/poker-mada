@@ -1,30 +1,48 @@
+import { TransactionStatus, TransactionType } from '@prisma/client';
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { adminService } from '../services/adminService';
 import { AdminRequest } from '../middleware/adminMiddleware';
 
 // Schémas de validation
-export const adjustBalanceSchema = z.object({
-  userId: z.string().uuid('ID utilisateur invalide'),
-  amount: z.number().refine((val) => val !== 0, 'Le montant ne peut pas être 0'),
-  reason: z.string().min(3, 'Raison requise (min 3 caractères)'),
-});
+export const adjustBalanceSchema = z
+  .object({
+    userId: z.string().uuid('ID utilisateur invalide'),
+    amount: z
+      .number()
+      .int()
+      .min(-100_000_000)
+      .max(100_000_000)
+      .refine((val) => val !== 0, 'Le montant ne peut pas être 0'),
+    reason: z.string().trim().min(3, 'Raison requise (min 3 caractères)').max(500),
+  })
+  .strict();
 
-export const banUserSchema = z.object({
-  userId: z.string().uuid('ID utilisateur invalide'),
-  reason: z.string().optional(),
-});
+export const banUserSchema = z
+  .object({
+    userId: z.string().uuid('ID utilisateur invalide'),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
 
-export const completeTransactionSchema = z.object({
-  transactionId: z.string().uuid('ID transaction invalide'),
-  externalRef: z.string().optional(),
-});
+export const completeTransactionSchema = z
+  .object({
+    transactionId: z.string().uuid('ID transaction invalide'),
+    externalRef: z.string().trim().min(1, 'Référence du paiement requise').max(120),
+  })
+  .strict();
 
-export const failTransactionSchema = z.object({
-  transactionId: z.string().uuid('ID transaction invalide'),
-  reason: z.string().min(3, 'Raison requise (min 3 caractères)'),
-});
+export const failTransactionSchema = z
+  .object({
+    transactionId: z.string().uuid('ID transaction invalide'),
+    reason: z.string().trim().min(3, 'Raison requise (min 3 caractères)').max(500),
+  })
+  .strict();
 
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
 // Contrôleur
 export class AdminController {
   // ============================================
@@ -46,10 +64,9 @@ export class AdminController {
 
   async getUsers(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const search = req.query.search as string;
-      const filter = req.query.filter as 'all' | 'active' | 'banned';
+      const { page, limit } = paginationSchema.parse(req.query);
+      const search = z.string().max(100).optional().parse(req.query.search);
+      const filter = z.enum(['all', 'active', 'banned']).optional().parse(req.query.filter);
 
       const result = await adminService.getUsers({ page, limit, search, filter });
       res.json(result);
@@ -108,11 +125,10 @@ export class AdminController {
 
   async getTransactions(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const type = req.query.type as string;
-      const status = req.query.status as string;
-      const userId = req.query.userId as string;
+      const { page, limit } = paginationSchema.parse(req.query);
+      const type = z.nativeEnum(TransactionType).optional().parse(req.query.type);
+      const status = z.nativeEnum(TransactionStatus).optional().parse(req.query.status);
+      const userId = z.string().uuid().optional().parse(req.query.userId);
 
       const result = await adminService.getTransactions({ page, limit, type, status, userId });
       res.json(result);
@@ -121,7 +137,11 @@ export class AdminController {
     }
   }
 
-  async getPendingTransactions(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  async getPendingTransactions(
+    req: AdminRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
     try {
       const result = await adminService.getPendingTransactions();
       res.json(result);
@@ -133,7 +153,11 @@ export class AdminController {
   async completeTransaction(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId, externalRef } = req.body;
-      const result = await adminService.completeTransaction(req.userId!, transactionId, externalRef);
+      const result = await adminService.completeTransaction(
+        req.userId!,
+        transactionId,
+        externalRef,
+      );
       res.json({ message: 'Transaction confirmée', ...result });
     } catch (error) {
       next(error);
@@ -156,9 +180,8 @@ export class AdminController {
 
   async getAuditLogs(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 50;
-      const adminId = req.query.adminId as string;
+      const { page, limit } = paginationSchema.parse(req.query);
+      const adminId = z.string().uuid().optional().parse(req.query.adminId);
 
       const result = await adminService.getAuditLogs({ page, limit, adminId });
       res.json(result);
@@ -174,10 +197,7 @@ export class AdminController {
   async runReconciliation(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await adminService.runReconciliation();
-      res.json({
-        message: `Réconciliation terminée: ${result.corrected} correction(s)`,
-        ...result,
-      });
+      res.json(result);
     } catch (error) {
       next(error);
     }

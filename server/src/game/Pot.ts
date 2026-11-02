@@ -3,7 +3,7 @@ import { HandEvaluator } from './HandEvaluator';
 import { Card } from './Card';
 
 interface PlayerBet {
-  odId: string
+  odId: string;
   amount: number;
   isAllIn: boolean;
 }
@@ -50,42 +50,24 @@ export class PotManager {
   }
 
   calculateSidePots(activePlayers: string[]): void {
-    // Trier les joueurs par mise totale
-    const playerBetsList = Array.from(this.playerBets.entries())
-      .filter(([id]) => activePlayers.includes(id))
-      .sort((a, b) => a[1].amount - b[1].amount);
-
+    // Folded players still contribute to every layer they funded.
+    const bets = Array.from(this.playerBets.entries());
+    const levels = [...new Set(bets.map(([, bet]) => bet.amount))].sort((a, b) => a - b);
     this.sidePots = [];
     let processedAmount = 0;
-
-    for (let i = 0; i < playerBetsList.length; i++) {
-      const [, bet] = playerBetsList[i];
-      const levelAmount = bet.amount - processedAmount;
-
-      if (levelAmount > 0) {
-        // Joueurs éligibles à ce niveau
-        const eligiblePlayers = playerBetsList.slice(i).map(([id]) => id);
-
-        // Calculer le pot pour ce niveau
-        const potAmount = levelAmount * eligiblePlayers.length;
-
-        this.sidePots.push({
-          amount: potAmount,
-          eligiblePlayers,
-        });
-
-        processedAmount = bet.amount;
-      }
-    }
-
-    // Mettre à jour le pot principal avec le premier side pot
-    if (this.sidePots.length > 0) {
-      this.mainPot = this.sidePots[0].amount;
+    for (const level of levels) {
+      const contributors = bets.filter(([, bet]) => bet.amount >= level);
+      const eligiblePlayers = activePlayers.filter((id) =>
+        contributors.some(([contributor]) => contributor === id),
+      );
+      const amount = (level - processedAmount) * contributors.length;
+      if (amount > 0) this.sidePots.push({ amount, eligiblePlayers });
+      processedAmount = level;
     }
   }
 
   distributePot(
-    playerHands: Map<string, { holeCards: Card[]; communityCards: Card[] }>
+    playerHands: Map<string, { holeCards: Card[]; communityCards: Card[] }>,
   ): Map<string, number> {
     const winnings = new Map<string, number>();
 
@@ -111,10 +93,12 @@ export class PotManager {
     for (const pot of allPots) {
       // Trouver le(s) gagnant(s) éligible(s)
       const eligibleHands = Array.from(evaluatedHands.entries()).filter(([playerId]) =>
-        pot.eligiblePlayers.includes(playerId)
+        pot.eligiblePlayers.includes(playerId),
       );
 
-      if (eligibleHands.length === 0) continue;
+      if (eligibleHands.length === 0) {
+        throw new Error('A funded pot has no eligible player');
+      }
 
       // Trouver la meilleure main
       let bestHand = eligibleHands[0][1];
@@ -135,9 +119,10 @@ export class PotManager {
 
       // Distribuer le pot
       const shareAmount = Math.floor(pot.amount / potWinners.length);
-      for (const winnerId of potWinners) {
+      const remainder = pot.amount % potWinners.length;
+      for (const [index, winnerId] of potWinners.entries()) {
         const current = winnings.get(winnerId) || 0;
-        winnings.set(winnerId, current + shareAmount);
+        winnings.set(winnerId, current + shareAmount + (index < remainder ? 1 : 0));
       }
     }
 
@@ -153,7 +138,7 @@ export class PotManager {
   }
 
   getSidePots(): PotType[] {
-    return [...this.sidePots];
+    return this.sidePots.slice(1);
   }
 
   reset(): void {

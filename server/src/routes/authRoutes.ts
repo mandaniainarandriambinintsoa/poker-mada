@@ -3,31 +3,48 @@ import {
   authController,
   registerSchema,
   loginSchema,
-  refreshTokenSchema,
   googleCallbackSchema,
 } from '../controllers/authController';
 import { validate } from '../middleware/validator';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { requireTrustedWebOrigin } from '../middleware/trustedWebOrigin';
 
 const router = Router();
 
-// GET /api/auth/google - Obtenir l'URL d'auth Google
-router.get('/google', authController.googleAuth.bind(authController));
-
-// POST /api/auth/google/callback - Callback Google OAuth
-router.post('/google/callback', validate(googleCallbackSchema), authController.googleCallback.bind(authController));
+// POST /api/auth/google/callback - Verify a Google Identity Services ID token.
+router.post(
+  '/google/callback',
+  requireTrustedWebOrigin,
+  validate(googleCallbackSchema),
+  authController.googleCallback.bind(authController),
+);
 
 // POST /api/auth/register - Inscription
-router.post('/register', validate(registerSchema), authController.register.bind(authController));
+router.post(
+  '/register',
+  requireTrustedWebOrigin,
+  validate(registerSchema),
+  authController.register.bind(authController),
+);
 
 // POST /api/auth/login - Connexion
-router.post('/login', validate(loginSchema), authController.login.bind(authController));
+router.post(
+  '/login',
+  requireTrustedWebOrigin,
+  validate(loginSchema),
+  authController.login.bind(authController),
+);
 
 // POST /api/auth/refresh - Renouveler les tokens
-router.post('/refresh', validate(refreshTokenSchema), authController.refresh.bind(authController));
+router.post('/refresh', requireTrustedWebOrigin, authController.refresh.bind(authController));
 
 // POST /api/auth/logout - Déconnexion (protégé)
-router.post('/logout', authMiddleware, authController.logout.bind(authController));
+router.post(
+  '/logout',
+  requireTrustedWebOrigin,
+  authMiddleware,
+  authController.logout.bind(authController),
+);
 
 // GET /api/auth/me - Informations utilisateur courant (protégé)
 router.get('/me', authMiddleware, authController.me.bind(authController));

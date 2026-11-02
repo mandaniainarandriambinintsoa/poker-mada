@@ -5,13 +5,18 @@
  * À RETIRER EN PRODUCTION
  */
 
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import { PokerBot, generateBotId, generateBotName, getBotDifficultyForTable } from './Bot';
 import { PokerTable } from './Table';
 import { PlayerAction } from '../shared/types/game';
 import { turnTimerManager } from './TurnTimer';
 import { awayManager, CONSECUTIVE_TIMEOUTS_THRESHOLD } from './AwayManager';
-import { prisma } from '../config/database';
+
+type HumanPlayerSettlementHandler = (
+  playerId: string,
+  tableId: string,
+  chipStack: number,
+) => Promise<void>;
 
 interface BotInstance {
   bot: PokerBot;
@@ -22,16 +27,16 @@ interface BotInstance {
 class BotManager {
   private bots: Map<string, BotInstance> = new Map();
   private botActionTimers: Map<string, NodeJS.Timeout> = new Map();
+  private humanPlayerSettlementHandler?: HumanPlayerSettlementHandler;
+
+  setHumanPlayerSettlementHandler(handler: HumanPlayerSettlementHandler): void {
+    this.humanPlayerSettlementHandler = handler;
+  }
 
   /**
    * Ajoute un bot à une table
    */
-  addBotToTable(
-    table: PokerTable,
-    tableId: string,
-    buyIn: number,
-    io?: Server
-  ): PokerBot | null {
+  addBotToTable(table: PokerTable, tableId: string, buyIn: number, io?: Server): PokerBot | null {
     const botId = generateBotId();
     const botName = generateBotName();
     const difficulty = getBotDifficultyForTable(tableId);
@@ -45,7 +50,7 @@ class BotManager {
 
     // Trouver un siège libre
     const state = table.getState();
-    const occupiedSeats = state.players.map(p => p.seatNumber);
+    const occupiedSeats = state.players.map((p) => p.seatNumber);
     let freeSeat = -1;
 
     for (let i = 0; i < state.maxPlayers; i++) {
@@ -118,7 +123,7 @@ class BotManager {
     table: PokerTable,
     tableId: string,
     io: Server,
-    onActionComplete?: () => void
+    onActionComplete?: () => void,
   ): void {
     const state = table.getState();
     const currentPlayerId = state.currentPlayerId;
@@ -158,7 +163,9 @@ class BotManager {
       // Décider de l'action
       const decision = bot.decideAction(table.getState(currentPlayerId), availableActions);
 
-      console.log(`Bot ${bot.getUsername()} decides: ${decision.action}${decision.amount ? ` (${decision.amount})` : ''}`);
+      console.log(
+        `Bot ${bot.getUsername()} decides: ${decision.action}${decision.amount ? ` (${decision.amount})` : ''}`,
+      );
 
       // Exécuter l'action
       const success = table.executeAction(currentPlayerId, decision.action, decision.amount);
@@ -178,9 +185,11 @@ class BotManager {
         for (const player of newState.players) {
           // Trouver le socket du joueur
           for (const [, socket] of io.sockets.sockets) {
-            if ((socket as any).userId === player.odId) {
+            if ((socket as Socket & { userId?: string }).userId === player.odId) {
               const playerState = table.getState(player.odId);
-              console.log(`Sending to ${player.username}: actions=[${playerState.availableActions.join(', ')}]`);
+              console.log(
+                `Sending to ${player.username}: actions=[${playerState.availableActions.join(', ')}]`,
+              );
               socket.emit('game:state-update', playerState);
               break;
             }
@@ -206,14 +215,19 @@ class BotManager {
             io,
             onTimeout: async () => {
               const playerId = newState.currentPlayerId!;
-              const player = newState.players.find(p => p.odId === playerId);
+              const player = newState.players.find((p) => p.odId === playerId);
 
               // Incrémenter le compteur d'auto-folds consécutifs
               const consecutiveTimeouts = table.incrementConsecutiveTimeouts(playerId);
-              console.log(`[AWAY] Player ${player?.username} has ${consecutiveTimeouts} consecutive timeouts`);
+              console.log(
+                `[AWAY] Player ${player?.username} has ${consecutiveTimeouts} consecutive timeouts`,
+              );
 
               // Vérifier si le joueur doit être marqué comme absent
-              if (consecutiveTimeouts >= CONSECUTIVE_TIMEOUTS_THRESHOLD && !awayManager.isAway(playerId)) {
+              if (
+                consecutiveTimeouts >= CONSECUTIVE_TIMEOUTS_THRESHOLD &&
+                !awayManager.isAway(playerId)
+              ) {
                 table.setPlayerAway(playerId);
                 awayManager.checkAndMarkAway(
                   playerId,
@@ -224,21 +238,29 @@ class BotManager {
                   // Callback d'exclusion automatique après 5 minutes
                   async () => {
                     const tableForExclusion = table;
-                    const playerState = tableForExclusion.getState().players.find(p => p.odId === playerId);
+                    const playerState = tableForExclusion
+                      .getState()
+                      .players.find((p) => p.odId === playerId);
                     if (!playerState) return;
+
+                    if (!this.humanPlayerSettlementHandler) {
+                      console.error(
+                        JSON.stringify({ event: 'wallet.settlement_handler_unavailable' }),
+                      );
+                      return;
+                    }
 
                     // Retirer le joueur de la table
                     const removedPlayer = tableForExclusion.removePlayer(playerState.seatNumber);
                     if (removedPlayer) {
-                      // Rendre les jetons au portefeuille
-                      await prisma.wallet.update({
-                        where: { userId: playerId },
-                        data: {
-                          balance: { increment: removedPlayer.chipStack },
-                          frozenBalance: { decrement: removedPlayer.initialBuyIn },
-                        },
-                      });
-                      console.log(`[AWAY] Auto-excluded ${player?.username} from table ${tableId}, returned ${removedPlayer.chipStack} chips`);
+                      await this.humanPlayerSettlementHandler(
+                        playerId,
+                        tableId,
+                        removedPlayer.chipStack,
+                      );
+                      console.log(
+                        `[AWAY] Auto-excluded player from table ${tableId}; reserved chips settled`,
+                      );
                     }
 
                     // Notifier tous les joueurs
@@ -247,11 +269,13 @@ class BotManager {
                       username: player?.username,
                       reason: 'away_timeout',
                     });
-                  }
+                  },
                 );
               }
 
-              console.log(`Auto-fold for player ${playerId} on table ${tableId} (timeout from bot turn)`);
+              console.log(
+                `Auto-fold for player ${playerId} on table ${tableId} (timeout from bot turn)`,
+              );
               const success = table.executeAction(playerId, 'fold');
               if (success) {
                 io.to(`table:${tableId}`).emit('game:action-made', {
@@ -262,7 +286,7 @@ class BotManager {
                 const nextState = table.getState();
                 for (const p of nextState.players) {
                   for (const [, s] of io.sockets.sockets) {
-                    if ((s as any).userId === p.odId) {
+                    if ((s as Socket & { userId?: string }).userId === p.odId) {
                       s.emit('game:state-update', table.getState(p.odId));
                       break;
                     }

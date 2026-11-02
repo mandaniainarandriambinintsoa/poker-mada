@@ -5,8 +5,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  // Note: directUrl removed because Supabase direct connection requires IPv6
-  // and Render uses IPv4. Using pooler connection for all operations.
 }
 
 // ============================================
@@ -28,7 +26,7 @@ model User {
   id            String       @id @default(uuid())
   username      String       @unique
   email         String       @unique
-  passwordHash  String?      // Nullable for OAuth users
+  passwordHash  String? // Nullable for OAuth users
   phone         String?      @unique // Nullable for OAuth users
   phoneVerified Boolean      @default(false)
   avatar        String?
@@ -41,27 +39,30 @@ model User {
   isActive      Boolean      @default(true)
   isBanned      Boolean      @default(false)
 
-  wallet           Wallet?
-  transactions     Transaction[]
-  gameSessions     GameSessionPlayer[]
-  gameHistory      GameHistory[]
-  refreshTokens    RefreshToken[]
-  adminAuditLogs   AdminAuditLog[]
+  wallet         Wallet?
+  transactions   Transaction[]
+  gameSessions   GameSessionPlayer[]
+  gameHistory    GameHistory[]
+  refreshTokens  RefreshToken[]
+  adminAuditLogs AdminAuditLog[]
 
   @@index([email])
   @@index([phone])
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  familyId  String
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
-  createdAt DateTime @default(now())
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([userId])
-  @@index([token])
+  @@index([familyId])
 }
 
 // ============================================
@@ -120,12 +121,14 @@ model Transaction {
   phoneNumber     String?
   description     String?
   metadata        Json?
+  requestKey      String?           @unique
   gameSessionId   String?
   gameSession     GameSession?      @relation(fields: [gameSessionId], references: [id])
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   completedAt     DateTime?
 
+  @@unique([paymentProvider, externalRef])
   @@index([userId])
   @@index([type])
   @@index([status])
@@ -143,19 +146,19 @@ enum TableTier {
 }
 
 model TableConfig {
-  id          String   @id @default(uuid())
-  name        String   @unique
+  id          String    @id @default(uuid())
+  name        String    @unique
   tier        TableTier
-  minBuyIn    Decimal  @db.Decimal(15, 2)
-  maxBuyIn    Decimal  @db.Decimal(15, 2)
-  smallBlind  Decimal  @db.Decimal(15, 2)
-  bigBlind    Decimal  @db.Decimal(15, 2)
-  maxPlayers  Int      @default(9)
-  minPlayers  Int      @default(2)
-  turnTimeout Int      @default(30)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  minBuyIn    Decimal   @db.Decimal(15, 2)
+  maxBuyIn    Decimal   @db.Decimal(15, 2)
+  smallBlind  Decimal   @db.Decimal(15, 2)
+  bigBlind    Decimal   @db.Decimal(15, 2)
+  maxPlayers  Int       @default(9)
+  minPlayers  Int       @default(2)
+  turnTimeout Int       @default(30)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   gameSessions GameSession[]
 }
@@ -239,14 +242,14 @@ model GameHistory {
 // ============================================
 
 model AdminAuditLog {
-  id          String   @id @default(uuid())
-  adminId     String
-  admin       User     @relation(fields: [adminId], references: [id])
-  action      String   // "ADJUST_BALANCE", "BAN_USER", "UNBAN_USER", "COMPLETE_TRANSACTION", "FAIL_TRANSACTION"
-  targetType  String   // "USER", "TRANSACTION", "WALLET"
-  targetId    String
-  details     Json?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id])
+  action     String // "ADJUST_BALANCE", "BAN_USER", "UNBAN_USER", "COMPLETE_TRANSACTION", "FAIL_TRANSACTION"
+  targetType String // "USER", "TRANSACTION", "WALLET"
+  targetId   String
+  details    Json?
+  createdAt  DateTime @default(now())
 
   @@index([adminId])
   @@index([action])

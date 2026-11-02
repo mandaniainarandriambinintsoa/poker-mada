@@ -1,7 +1,9 @@
+import { stopPeriodicReconciliation } from './services/reconciliationService';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 
@@ -14,26 +16,23 @@ import { initializeSocketManager } from './socket/socketManager';
 // ============================================
 // GESTIONNAIRES D'ERREURS NON CAPTURÉES
 // ============================================
-// Ces handlers empêchent le serveur de crasher sur des erreurs imprévues
-
-process.on('uncaughtException', (error: Error) => {
-  console.error('=== UNCAUGHT EXCEPTION ===');
-  console.error('Error:', error.message);
-  console.error('Stack:', error.stack);
-  // Ne pas faire process.exit() - laisser le serveur continuer
-  // Mais logger l'erreur pour investigation
+// Continuing after an uncaught failure could corrupt in-memory games.
+process.on('uncaughtException', () => {
+  console.error(JSON.stringify({ event: 'process.uncaught_exception' }));
+  void gracefulShutdown('uncaughtException', 1);
 });
-
-process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-  console.error('=== UNHANDLED REJECTION ===');
-  console.error('Reason:', reason);
-  console.error('Promise:', promise);
-  // Ne pas faire process.exit() - laisser le serveur continuer
+process.on('unhandledRejection', () => {
+  console.error(JSON.stringify({ event: 'process.unhandled_rejection' }));
+  void gracefulShutdown('unhandledRejection', 1);
 });
 
 // Créer l'application Express
 const app = express();
 const httpServer = createServer(app);
+
+if (config.trustProxyHops > 0) {
+  app.set('trust proxy', config.trustProxyHops);
+}
 
 // Configurer Socket.io avec options optimisées pour la charge
 const io = new Server(httpServer, {
@@ -43,14 +42,15 @@ const io = new Server(httpServer, {
     credentials: true,
   },
   // Optimisations pour haute charge
-  pingTimeout: 60000,        // 60s avant de considérer déconnecté
-  pingInterval: 25000,       // Ping toutes les 25s
-  upgradeTimeout: 30000,     // 30s pour upgrade de connexion
-  maxHttpBufferSize: 1e6,    // 1MB max par message
+  pingTimeout: 60000, // 60s avant de considérer déconnecté
+  pingInterval: 25000, // Ping toutes les 25s
+  upgradeTimeout: 30000, // 30s pour upgrade de connexion
+  maxHttpBufferSize: 16_384, // 1MB max par message
   transports: ['websocket', 'polling'], // Préférer WebSocket
   allowUpgrades: true,
-  perMessageDeflate: {       // Compression des messages
-    threshold: 1024,         // Compresser si > 1KB
+  perMessageDeflate: {
+    // Compression des messages
+    threshold: 1024, // Compresser si > 1KB
   },
 });
 
@@ -62,7 +62,7 @@ app.use(
   cors({
     origin: config.clientUrl,
     credentials: true,
-  })
+  }),
 );
 
 // Rate limiting - Configuration différenciée
@@ -91,10 +91,13 @@ const authLimiter = rateLimit({
 app.use('/api/', generalLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/google/callback', authLimiter);
+app.use('/api/auth/refresh', authLimiter);
 
 // Parser JSON
 app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: false, limit: '10kb', parameterLimit: 50 }));
+app.use(cookieParser());
 
 // Routes API
 app.use('/api', routes);
@@ -113,28 +116,20 @@ app.get('/', (req, res) => {
 // ============================================
 // Utilisé par Render et autres plateformes pour vérifier la santé du serveur
 
-app.get('/health', async (req, res) => {
+app.get('/health', async (_req, res) => {
   const healthCheck = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: {
-      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-      unit: 'MB',
-    },
-    connections: {
-      sockets: io.sockets.sockets.size,
-    },
   };
 
+  let timeout: NodeJS.Timeout | undefined;
   try {
     // Vérifier la connexion DB (avec timeout)
-    const dbCheck = await Promise.race([
+    await Promise.race([
       prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('DB timeout')), 5000)
-      ),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('DB timeout')), 5000);
+      }),
     ]);
 
     res.json(healthCheck);
@@ -144,6 +139,8 @@ app.get('/health', async (req, res) => {
       status: 'degraded',
       error: 'Database connection issue',
     });
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 });
 
@@ -173,12 +170,17 @@ const start = async () => {
   Port: ${config.port}
   API URL: http://localhost:${config.port}/api
   Client URL: ${config.clientUrl}
-  Max connections: Unlimited (PM2 recommended)
+  Single game process — drain tables before restart
 ========================================
       `);
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error(
+      JSON.stringify({
+        event: 'process.start_failed',
+        type: error instanceof Error ? error.name : 'UnknownError',
+      }),
+    );
     process.exit(1);
   }
 };
@@ -188,32 +190,22 @@ const start = async () => {
 // ============================================
 // Fermer proprement les connexions avant de quitter
 
-const gracefulShutdown = async (signal: string) => {
-  console.log(`\n${signal} received. Shutting down gracefully...`);
-
-  // Empêcher de nouvelles connexions
-  httpServer.close(() => {
-    console.log('HTTP server closed');
-  });
-
-  // Fermer toutes les connexions Socket.io
-  io.close(() => {
-    console.log('Socket.io connections closed');
-  });
-
-  // Déconnecter la base de données
+let shuttingDown = false;
+const gracefulShutdown = async (signal: string, exitCode = 0) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(JSON.stringify({ event: 'process.shutdown', signal }));
+  stopPeriodicReconciliation();
+  const deadline = setTimeout(() => process.exit(1), 10000);
+  deadline.unref();
   try {
+    await new Promise<void>((resolve) => io.close(() => resolve()));
     await disconnectDatabase();
-    console.log('Database disconnected');
-  } catch (error) {
-    console.error('Error disconnecting database:', error);
+    clearTimeout(deadline);
+    process.exit(exitCode);
+  } catch {
+    process.exit(1);
   }
-
-  // Attendre un peu que les connexions se ferment
-  setTimeout(() => {
-    console.log('Shutdown complete');
-    process.exit(0);
-  }, 2000);
 };
 
 // Écouter les signaux d'arrêt

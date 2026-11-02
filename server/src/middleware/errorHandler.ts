@@ -1,53 +1,54 @@
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
 
 export class AppError extends Error {
-  statusCode: number;
-  code: string;
-
-  constructor(message: string, statusCode: number, code: string = 'ERROR') {
+  constructor(
+    message: string,
+    public statusCode: number,
+    public code = 'ERROR',
+  ) {
     super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-    Error.captureStackTrace(this, this.constructor);
   }
 }
-
 export const errorHandler = (
-  err: Error | AppError,
-  req: Request,
+  error: unknown,
+  _req: Request,
   res: Response,
-  _next: NextFunction
+  _next: NextFunction,
 ): void => {
-  console.error('Error:', err);
-
-  if (err instanceof AppError) {
-    res.status(err.statusCode).json({
-      error: err.message,
-      code: err.code,
+  if (error instanceof AppError) {
+    res.status(error.statusCode).json({ error: error.message, code: error.code });
+    return;
+  }
+  if (error instanceof ZodError) {
+    res.status(400).json({
+      error: 'Vérifiez les informations saisies',
+      code: 'VALIDATION_ERROR',
+      details: error.issues.map((issue) => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+      })),
     });
     return;
   }
-
-  // Erreur Prisma - violation de contrainte unique
-  if ((err as any).code === 'P2002') {
-    const field = (err as any).meta?.target?.[0] || 'champ';
-    res.status(409).json({
-      error: `Ce ${field} est déjà utilisé`,
-      code: 'DUPLICATE_ENTRY',
-    });
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    res
+      .status(409)
+      .json({ error: 'Cette information ou référence est déjà utilisée', code: 'DUPLICATE_ENTRY' });
     return;
   }
-
-  // Erreur générique
+  console.error(
+    JSON.stringify({
+      event: 'request.failed',
+      type: error instanceof Error ? error.name : 'UnknownError',
+    }),
+  );
   res.status(500).json({
-    error: 'Erreur serveur interne',
+    error: 'Le service est indisponible. Réessayez dans un instant.',
     code: 'INTERNAL_ERROR',
   });
 };
-
-export const notFoundHandler = (req: Request, res: Response): void => {
-  res.status(404).json({
-    error: 'Route non trouvée',
-    code: 'NOT_FOUND',
-  });
+export const notFoundHandler = (_req: Request, res: Response): void => {
+  res.status(404).json({ error: 'Route introuvable', code: 'NOT_FOUND' });
 };

@@ -34,11 +34,7 @@ router.get('/users', adminController.getUsers.bind(adminController));
 router.get('/users/:userId', adminController.getUserDetails.bind(adminController));
 
 // POST /api/admin/users/ban - Bannir un joueur
-router.post(
-  '/users/ban',
-  validate(banUserSchema),
-  adminController.banUser.bind(adminController)
-);
+router.post('/users/ban', validate(banUserSchema), adminController.banUser.bind(adminController));
 
 // POST /api/admin/users/:userId/unban - Débannir un joueur
 router.post('/users/:userId/unban', adminController.unbanUser.bind(adminController));
@@ -52,7 +48,7 @@ router.post(
   '/balance/adjust',
   requireSuperAdmin,
   validate(adjustBalanceSchema),
-  adminController.adjustBalance.bind(adminController)
+  adminController.adjustBalance.bind(adminController),
 );
 
 // ============================================
@@ -69,14 +65,14 @@ router.get('/transactions/pending', adminController.getPendingTransactions.bind(
 router.post(
   '/transactions/complete',
   validate(completeTransactionSchema),
-  adminController.completeTransaction.bind(adminController)
+  adminController.completeTransaction.bind(adminController),
 );
 
 // POST /api/admin/transactions/fail - Marquer comme échouée
 router.post(
   '/transactions/fail',
   validate(failTransactionSchema),
-  adminController.failTransaction.bind(adminController)
+  adminController.failTransaction.bind(adminController),
 );
 
 // ============================================
@@ -91,6 +87,10 @@ router.get('/audit-logs', requireSuperAdmin, adminController.getAuditLogs.bind(a
 // ============================================
 
 // POST /api/admin/reconcile - Lancer la réconciliation des balances gelées
-router.post('/reconcile', requireSuperAdmin, adminController.runReconciliation.bind(adminController));
+router.post(
+  '/reconcile',
+  requireSuperAdmin,
+  adminController.runReconciliation.bind(adminController),
+);
 
 export default router;

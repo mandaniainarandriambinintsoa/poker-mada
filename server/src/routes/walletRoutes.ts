@@ -7,6 +7,7 @@ import {
 } from '../controllers/walletController';
 import { validate } from '../middleware/validator';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { requireAdmin } from '../middleware/adminMiddleware';
 
 const router = Router();
 
@@ -23,21 +24,22 @@ router.get('/transactions', walletController.getTransactions.bind(walletControll
 router.post(
   '/deposit',
   validate(depositSchema),
-  walletController.initiateDeposit.bind(walletController)
+  walletController.initiateDeposit.bind(walletController),
 );
 
 // POST /api/wallet/deposit/confirm - Confirmer un dépôt (callback Mobile Money)
 router.post(
   '/deposit/confirm',
+  requireAdmin,
   validate(confirmDepositSchema),
-  walletController.confirmDeposit.bind(walletController)
+  walletController.confirmDeposit.bind(walletController),
 );
 
 // POST /api/wallet/withdraw - Initier un retrait
 router.post(
   '/withdraw',
   validate(withdrawSchema),
-  walletController.initiateWithdrawal.bind(walletController)
+  walletController.initiateWithdrawal.bind(walletController),
 );
 
 export default router;

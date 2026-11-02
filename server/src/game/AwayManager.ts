@@ -35,7 +35,7 @@ class AwayManager {
     username: string,
     consecutiveTimeouts: number,
     io: Server,
-    onExclude: () => void
+    onExclude: () => void,
   ): boolean {
     // Vérifier si le seuil d'auto-folds consécutifs est atteint
     if (consecutiveTimeouts < CONSECUTIVE_TIMEOUTS_THRESHOLD) {
@@ -51,7 +51,6 @@ class AwayManager {
 
     // Créer le timer d'exclusion automatique
     const exclusionTimer = setTimeout(() => {
-      console.log(`[AWAY] Auto-excluding player ${username} from table ${tableId} (5 min timeout)`);
       this.awayPlayers.delete(playerId);
       onExclude();
     }, AWAY_TIMEOUT_MS);
@@ -64,8 +63,6 @@ class AwayManager {
       awayStartTime,
       exclusionTimer,
     });
-
-    console.log(`[AWAY] Player ${username} marked as away on table ${tableId}`);
 
     // Notifier tous les joueurs de la table
     io.to(`table:${tableId}`).emit('player:away', {
@@ -91,8 +88,6 @@ class AwayManager {
     // Annuler le timer d'exclusion
     clearTimeout(awayPlayer.exclusionTimer);
     this.awayPlayers.delete(playerId);
-
-    console.log(`[AWAY] Player ${awayPlayer.username} returned to table ${awayPlayer.tableId}`);
 
     // Notifier tous les joueurs de la table
     io.to(`table:${awayPlayer.tableId}`).emit('player:returned', {
@@ -144,7 +139,7 @@ class AwayManager {
    * Réinitialiser le compteur d'auto-folds quand le joueur joue activement
    * (Cette méthode sera appelée depuis socketManager quand le joueur fait une action manuelle)
    */
-  resetConsecutiveTimeouts(playerId: string): void {
+  resetConsecutiveTimeouts(_playerId: string): void {
     // Le compteur est stocké dans Table.ts, pas ici
     // Cette méthode est un placeholder pour la logique
   }

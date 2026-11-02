@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { config } from '../config/env';
 import { prisma } from '../config/database';
+import { verifyAccessToken } from '../security/tokens';
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -10,20 +10,15 @@ export interface AuthRequest extends Request {
     username: string;
     email: string;
     role: string;
+    phone: string | null;
+    avatar: string | null;
   };
-}
-
-export interface JwtPayload {
-  userId: string;
-  email: string;
-  iat?: number;
-  exp?: number;
 }
 
 export const authMiddleware = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
@@ -35,11 +30,20 @@ export const authMiddleware = async (
 
     const token = authHeader.split(' ')[1];
 
-    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+    const decoded = verifyAccessToken(token);
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, username: true, email: true, role: true, isActive: true, isBanned: true },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        isActive: true,
+        isBanned: true,
+      },
     });
 
     if (!user) {
@@ -53,7 +57,14 @@ export const authMiddleware = async (
     }
 
     req.userId = user.id;
-    req.user = { id: user.id, username: user.username, email: user.email, role: user.role };
+    req.user = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+      avatar: user.avatar,
+      role: user.role,
+    };
 
     next();
   } catch (error) {

@@ -9,7 +9,7 @@
  * - pm2 status            : Voir le statut des processus
  * - pm2 logs poker-mada   : Voir les logs
  * - pm2 restart poker-mada: Redémarrer
- * - pm2 reload poker-mada : Redémarrer sans downtime (zero-downtime)
+ * - pm2 reload poker-mada : Redémarrer après vidage des tables
  * - pm2 stop poker-mada   : Arrêter
  * - pm2 monit             : Monitoring en temps réel
  */
@@ -20,11 +20,10 @@ module.exports = {
       name: 'poker-mada',
       script: 'dist/app.js',
 
-      // Mode cluster pour utiliser tous les CPU
-      // Note: Socket.io nécessite sticky sessions ou Redis adapter
-      // Pour une seule instance sur Render, utiliser 1
-      instances: 1,  // Changer à 'max' si vous utilisez Redis adapter
-      exec_mode: 'fork', // Changer à 'cluster' si Redis adapter configuré
+      // Tables and timers are process-local: drain games before restarting.
+      // A Socket.io Redis adapter alone does not make the game engine distributed.
+      instances: 1,
+      exec_mode: 'fork',
 
       // Redémarrage automatique
       autorestart: true,

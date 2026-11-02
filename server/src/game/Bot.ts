@@ -7,9 +7,7 @@
  * TODO: Retirer ce fichier et les références au bot avant la mise en production
  */
 
-import { PokerTable } from './Table';
-import { PlayerAction, GameState } from '../shared/types/game';
-import { HandEvaluator } from './HandEvaluator';
+import { PlayerAction, GameState, Card } from '../shared/types/game';
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard';
 
@@ -21,8 +19,14 @@ interface BotConfig {
 }
 
 const BOT_NAMES = [
-  'PokerBot_1', 'Lucky_Bot', 'CardMaster', 'BluffKing',
-  'ChipHunter', 'AceBot', 'RoyalFlush', 'PokerPro'
+  'PokerBot_1',
+  'Lucky_Bot',
+  'CardMaster',
+  'BluffKing',
+  'ChipHunter',
+  'AceBot',
+  'RoyalFlush',
+  'PokerPro',
 ];
 
 let botCounter = 0;
@@ -32,7 +36,9 @@ export function generateBotId(): string {
 }
 
 export function generateBotName(): string {
-  return BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)] + '_' + Math.floor(Math.random() * 100);
+  return (
+    BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)] + '_' + Math.floor(Math.random() * 100)
+  );
 }
 
 export function getBotDifficultyForTable(tableId: string): BotDifficulty {
@@ -80,9 +86,9 @@ export class PokerBot {
    */
   decideAction(
     gameState: GameState,
-    availableActions: PlayerAction[]
+    availableActions: PlayerAction[],
   ): { action: PlayerAction; amount?: number } {
-    const myPlayer = gameState.players.find(p => p.odId === this.odId);
+    const myPlayer = gameState.players.find((p) => p.odId === this.odId);
     if (!myPlayer) {
       return { action: 'fold' };
     }
@@ -109,9 +115,10 @@ export class PokerBot {
     gameState: GameState,
     availableActions: PlayerAction[],
     handStrength: number,
-    chipStack: number
+    chipStack: number,
   ): { action: PlayerAction; amount?: number } {
-    const toCall = gameState.currentBet - (gameState.players.find(p => p.odId === this.odId)?.currentBet || 0);
+    const toCall =
+      gameState.currentBet - (gameState.players.find((p) => p.odId === this.odId)?.currentBet || 0);
 
     // Bot facile: suit souvent, relance rarement
     if (handStrength > 0.7) {
@@ -147,9 +154,9 @@ export class PokerBot {
     gameState: GameState,
     availableActions: PlayerAction[],
     handStrength: number,
-    chipStack: number
+    chipStack: number,
   ): { action: PlayerAction; amount?: number } {
-    const myPlayer = gameState.players.find(p => p.odId === this.odId)!;
+    const myPlayer = gameState.players.find((p) => p.odId === this.odId)!;
     const toCall = gameState.currentBet - myPlayer.currentBet;
     const potOdds = toCall / (gameState.mainPot + toCall);
 
@@ -164,7 +171,7 @@ export class PokerBot {
       }
     }
 
-    if (handStrength > 0.5 || (handStrength > potOdds)) {
+    if (handStrength > 0.5 || handStrength > potOdds) {
       // Main correcte ou bonnes cotes
       if (toCall === 0 && availableActions.includes('check')) {
         return { action: 'check' };
@@ -187,9 +194,9 @@ export class PokerBot {
     gameState: GameState,
     availableActions: PlayerAction[],
     handStrength: number,
-    chipStack: number
+    chipStack: number,
   ): { action: PlayerAction; amount?: number } {
-    const myPlayer = gameState.players.find(p => p.odId === this.odId)!;
+    const myPlayer = gameState.players.find((p) => p.odId === this.odId)!;
     const toCall = gameState.currentBet - myPlayer.currentBet;
     const potOdds = toCall / (gameState.mainPot + toCall);
     const position = this.getPosition(gameState);
@@ -237,7 +244,7 @@ export class PokerBot {
    * Évalue la force de la main (0-1)
    */
   private evaluateHandStrength(gameState: GameState): number {
-    const myPlayer = gameState.players.find(p => p.odId === this.odId);
+    const myPlayer = gameState.players.find((p) => p.odId === this.odId);
 
     // Si on ne peut pas voir ses cartes, retourner une force aléatoire
     // pour éviter de toujours fold
@@ -258,8 +265,8 @@ export class PokerBot {
     return this.evaluatePostflopStrength(holeCards, communityCards);
   }
 
-  private evaluatePreflopStrength(holeCards: any[]): number {
-    const ranks = holeCards.map(c => this.rankToValue(c.rank));
+  private evaluatePreflopStrength(holeCards: Card[]): number {
+    const ranks = holeCards.map((c) => this.rankToValue(c.rank));
     const suited = holeCards[0].suit === holeCards[1].suit;
     const paired = ranks[0] === ranks[1];
     const highCard = Math.max(...ranks);
@@ -284,10 +291,10 @@ export class PokerBot {
     return Math.min(strength, 1);
   }
 
-  private evaluatePostflopStrength(holeCards: any[], communityCards: any[]): number {
+  private evaluatePostflopStrength(holeCards: Card[], communityCards: Card[]): number {
     // Évaluation simplifiée postflop
     // Vérifie les paires, deux paires, brelans, etc.
-    const allRanks = [...holeCards, ...communityCards].map(c => this.rankToValue(c.rank));
+    const allRanks = [...holeCards, ...communityCards].map((c) => this.rankToValue(c.rank));
     const rankCounts = new Map<number, number>();
 
     for (const rank of allRanks) {
@@ -317,18 +324,29 @@ export class PokerBot {
 
   private rankToValue(rank: string): number {
     const values: Record<string, number> = {
-      '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
-      '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14
+      '2': 2,
+      '3': 3,
+      '4': 4,
+      '5': 5,
+      '6': 6,
+      '7': 7,
+      '8': 8,
+      '9': 9,
+      '10': 10,
+      J: 11,
+      Q: 12,
+      K: 13,
+      A: 14,
     };
     return values[rank] || 2;
   }
 
   private getPosition(gameState: GameState): 'early' | 'middle' | 'late' {
-    const myPlayer = gameState.players.find(p => p.odId === this.odId);
+    const myPlayer = gameState.players.find((p) => p.odId === this.odId);
     if (!myPlayer) return 'middle';
 
-    const activePlayers = gameState.players.filter(p => p.isActive && !p.isFolded);
-    const myIndex = activePlayers.findIndex(p => p.odId === this.odId);
+    const activePlayers = gameState.players.filter((p) => p.isActive && !p.isFolded);
+    const myIndex = activePlayers.findIndex((p) => p.odId === this.odId);
     const totalActive = activePlayers.length;
 
     if (myIndex < totalActive / 3) return 'early';

@@ -21,7 +21,7 @@ export interface ActionRequest {
 
 // Joueur à la table
 export interface TablePlayer {
-  odId: string
+  odId: string;
   username: string;
   avatar?: string;
   seatNumber: number;

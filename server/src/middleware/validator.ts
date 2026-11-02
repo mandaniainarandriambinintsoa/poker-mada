@@ -4,11 +4,11 @@ import { ZodSchema, ZodError } from 'zod';
 export const validate = (schema: ZodSchema) => {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
-      schema.parse(req.body);
+      req.body = schema.parse(req.body);
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        const errors = error.errors.map((err) => ({
+        const errors = error.issues.map((err) => ({
           field: err.path.join('.'),
           message: err.message,
         }));
@@ -27,7 +27,7 @@ export const validateQuery = (schema: ZodSchema) => {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        const errors = error.errors.map((err) => ({
+        const errors = error.issues.map((err) => ({
           field: err.path.join('.'),
           message: err.message,
         }));

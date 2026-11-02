@@ -1,8 +1,20 @@
-import { GameState, GamePhase, PlayerAction, TablePlayer, Card as CardType, WinnerInfo, HandRank } from '../shared/types/game';
+import {
+  GameState,
+  GamePhase,
+  PlayerAction,
+  TablePlayer,
+  Card as CardType,
+  WinnerInfo,
+  HandRank,
+} from '../shared/types/game';
 import { Card } from './Card';
 import { Deck } from './Deck';
 import { PotManager } from './Pot';
 import { HandEvaluator } from './HandEvaluator';
+
+const debugLog = (...args: unknown[]): void => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args);
+};
 
 interface TableConfig {
   id: string;
@@ -16,7 +28,7 @@ interface TableConfig {
 }
 
 interface Player {
-  odId: string
+  odId: string;
   username: string;
   avatar?: string;
   seatNumber: number;
@@ -72,7 +84,7 @@ export class PokerTable {
     username: string,
     seatNumber: number,
     buyIn: number,
-    avatar?: string
+    avatar?: string,
   ): boolean {
     if (this.players.has(seatNumber)) {
       return false; // Siège occupé
@@ -92,7 +104,8 @@ export class PokerTable {
       currentBet: 0,
       holeCards: [],
       isActive: true,
-      isFolded: false,
+      // A player arriving mid-hand is seated for the next deal.
+      isFolded: this.phase !== 'waiting',
       isAllIn: false,
       isSittingOut: false,
       isAway: false,
@@ -111,6 +124,10 @@ export class PokerTable {
   removePlayer(seatNumber: number): Player | null {
     const player = this.players.get(seatNumber);
     if (!player) return null;
+
+    if (this.phase !== 'waiting' && this.phase !== 'showdown') {
+      this.forcePlayerFold(player.odId);
+    }
 
     this.players.delete(seatNumber);
 
@@ -138,7 +155,8 @@ export class PokerTable {
       if (player.holeCards.length > 0 && !player.isFolded) {
         return {
           canLeave: false,
-          reason: 'Vous ne pouvez pas quitter pendant une main en cours. Attendez la fin de la main ou faites fold.',
+          reason:
+            'Vous ne pouvez pas quitter pendant une main en cours. Attendez la fin de la main ou faites fold.',
         };
       }
     }
@@ -159,7 +177,8 @@ export class PokerTable {
         if (player.seatNumber === nextSbSeat || player.seatNumber === nextBbSeat) {
           return {
             canLeave: false,
-            reason: 'Vous ne pouvez pas quitter maintenant car vous devez payer les blinds à la prochaine main. Attendez votre tour de dealer.',
+            reason:
+              'Vous ne pouvez pas quitter maintenant car vous devez payer les blinds à la prochaine main. Attendez votre tour de dealer.',
           };
         }
       }
@@ -182,9 +201,11 @@ export class PokerTable {
       player.hasActed = true;
       player.lastAction = 'fold';
 
-      // Vérifier si c'était le tour du joueur
-      if (player.seatNumber === this.currentPlayerIndex) {
+      const remaining = [...this.players.values()].filter((p) => p.isActive && !p.isFolded);
+      if (remaining.length === 1) {
         this.checkForWinner();
+      } else if (player.seatNumber === this.currentPlayerIndex) {
+        this.startTurn();
       }
 
       return true;
@@ -224,7 +245,7 @@ export class PokerTable {
     if (player) {
       player.isAway = true;
       player.awayStartTime = Date.now();
-      console.log(`[TABLE] Player ${player.username} marked as away`);
+      debugLog('[TABLE] Player marked as away');
     }
   }
 
@@ -237,7 +258,7 @@ export class PokerTable {
       player.isAway = false;
       player.awayStartTime = undefined;
       player.consecutiveTimeouts = 0;
-      console.log(`[TABLE] Player ${player.username} returned`);
+      debugLog('[TABLE] Player returned');
     }
   }
 
@@ -285,7 +306,7 @@ export class PokerTable {
     this.startTurn();
 
     // Notifier qu'une nouvelle main a commencé
-    console.log(`=== NEW HAND #${this.handNumber} started ===`);
+    debugLog(`=== NEW HAND #${this.handNumber} started ===`);
     if (this.onNewHandCallback) {
       this.onNewHandCallback();
     }
@@ -362,8 +383,7 @@ export class PokerTable {
     const seats = this.getActiveSeatNumbers();
     if (seats.length === 0) return null;
 
-    const startIndex =
-      this.currentPlayerIndex === -1 ? 0 : seats.indexOf(this.currentPlayerIndex);
+    const startIndex = this.currentPlayerIndex === -1 ? 0 : seats.indexOf(this.currentPlayerIndex);
 
     for (let i = 1; i <= seats.length; i++) {
       const seatNum = seats[(startIndex + i) % seats.length];
@@ -382,6 +402,7 @@ export class PokerTable {
 
   // Actions du joueur
   executeAction(playerId: string, action: PlayerAction, amount?: number): boolean {
+    if (this.phase === 'waiting' || this.phase === 'showdown') return false;
     const player = this.findPlayerById(playerId);
     if (!player) return false;
 
@@ -441,6 +462,9 @@ export class PokerTable {
 
   private raise(player: Player, amount: number): boolean {
     const toCall = this.currentBet - player.currentBet;
+    if (!Number.isSafeInteger(amount) || amount <= toCall || amount > player.chipStack)
+      return false;
+    if (amount === player.chipStack) return this.allIn(player);
     const raiseAmount = amount - toCall;
 
     if (raiseAmount < this.minRaise && player.chipStack > amount) {
@@ -538,10 +562,18 @@ export class PokerTable {
   }
 
   private showdown(): void {
+    this.currentPlayerIndex = -1;
     // Calculer les mains et distribuer le pot
-    const activePlayers = Array.from(this.players.values()).filter(
-      (p) => !p.isFolded && p.isActive
-    );
+    // Tie remainders go clockwise from the first occupied seat after the dealer.
+    const activePlayers = Array.from(this.players.values())
+      .filter((p) => !p.isFolded && p.isActive)
+      .sort(
+        (a, b) =>
+          ((a.seatNumber - this.dealerPosition - 1 + this.config.maxPlayers) %
+            this.config.maxPlayers) -
+          ((b.seatNumber - this.dealerPosition - 1 + this.config.maxPlayers) %
+            this.config.maxPlayers),
+      );
 
     const playerHands = new Map<string, { holeCards: Card[]; communityCards: Card[] }>();
     const evaluatedHands = new Map<string, ReturnType<typeof HandEvaluator.evaluate>>();
@@ -574,8 +606,8 @@ export class PokerTable {
           amount,
           handDescription: evaluated.description,
           handRank: evaluated.rank as HandRank,
-          winningCards: (evaluated.cards as Card[]).map(c => c.toJSON()),
-          holeCards: player.holeCards.map(c => c.toJSON()),
+          winningCards: (evaluated.cards as Card[]).map((c) => c.toJSON()),
+          holeCards: player.holeCards.map((c) => c.toJSON()),
           potType: 'main',
           isSplit,
         });
@@ -585,7 +617,7 @@ export class PokerTable {
       }
     }
 
-    console.log(`=== SHOWDOWN: Winners: ${this.lastWinners.map(w => `${w.username} (${w.handDescription}) - ${w.amount} Ar`).join(', ')} ===`);
+    debugLog(`=== SHOWDOWN: ${this.lastWinners.length} winner(s) ===`);
 
     // Après un délai, démarrer une nouvelle main
     setTimeout(() => {
@@ -607,24 +639,26 @@ export class PokerTable {
       winner.chipStack += potTotal;
 
       // Enregistrer les informations du gagnant (sans showdown)
-      this.lastWinners = [{
-        odId: winner.odId,
-        username: winner.username,
-        amount: potTotal,
-        handDescription: 'Tous les autres joueurs ont fold',
-        handRank: 'high-card' as HandRank,
-        winningCards: [],
-        holeCards: winner.holeCards.map(c => c.toJSON()),
-        potType: 'main',
-        isSplit: false,
-      }];
+      this.lastWinners = [
+        {
+          odId: winner.odId,
+          username: winner.username,
+          amount: potTotal,
+          handDescription: 'Tous les autres joueurs ont fold',
+          handRank: 'high-card' as HandRank,
+          winningCards: [],
+          holeCards: winner.holeCards.map((c) => c.toJSON()),
+          potType: 'main',
+          isSplit: false,
+        },
+      ];
 
       this.pot.reset();
 
       // Marquer la fin de la main
       this.phase = 'showdown';
       this.currentPlayerIndex = -1;
-      console.log(`=== HAND OVER: ${winner.username} wins ${potTotal} Ar! Starting new hand in 3 seconds ===`);
+      debugLog('=== HAND OVER: starting new hand in 3 seconds ===');
 
       // Démarrer une nouvelle main après un délai
       setTimeout(() => {
@@ -652,7 +686,7 @@ export class PokerTable {
 
   private getActivePlayerCount(): number {
     return Array.from(this.players.values()).filter(
-      (p) => p.isActive && !p.isSittingOut && p.chipStack > 0
+      (p) => p.isActive && !p.isSittingOut && p.chipStack > 0,
     ).length;
   }
 
@@ -666,21 +700,24 @@ export class PokerTable {
   }
 
   getAvailableActions(playerId: string): PlayerAction[] {
+    if (this.phase === 'waiting' || this.phase === 'showdown') return [];
     const player = this.findPlayerById(playerId);
     if (!player || player.seatNumber !== this.currentPlayerIndex) {
-      console.log(`getAvailableActions(${playerId}): not current player. playerSeat=${player?.seatNumber}, currentIdx=${this.currentPlayerIndex}`);
+      debugLog('getAvailableActions: not current player');
       return [];
     }
 
     // Si le joueur est fold ou all-in, pas d'actions
     if (player.isFolded || player.isAllIn) {
-      console.log(`getAvailableActions(${playerId}): player folded or all-in`);
+      debugLog('getAvailableActions: player folded or all-in');
       return [];
     }
 
     const actions: PlayerAction[] = ['fold'];
     const toCall = this.currentBet - player.currentBet;
-    console.log(`getAvailableActions(${playerId}): toCall=${toCall}, currentBet=${this.currentBet}, playerBet=${player.currentBet}`);
+    debugLog(
+      `getAvailableActions: toCall=${toCall}, currentBet=${this.currentBet}, playerBet=${player.currentBet}`,
+    );
 
     // Check: possible si aucune mise à suivre
     if (toCall <= 0) {
@@ -703,7 +740,7 @@ export class PokerTable {
       actions.push('all-in');
     }
 
-    console.log(`getAvailableActions(${playerId}): returning actions=[${actions.join(', ')}]`);
+    debugLog(`getAvailableActions: returning actions=[${actions.join(', ')}]`);
     return actions;
   }
 

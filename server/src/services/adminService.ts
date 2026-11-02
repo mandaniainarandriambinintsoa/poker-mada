@@ -1,4 +1,5 @@
-import { Prisma } from '@prisma/client';
+import { walletService } from './walletService';
+import { Prisma, TransactionType, TransactionStatus } from '@prisma/client';
 import { prisma } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { reconcileFrozenBalances } from './reconciliationService';
@@ -30,11 +31,11 @@ export class AdminService {
       }),
       // Pending deposits
       prisma.transaction.count({
-        where: { type: 'DEPOSIT', status: 'PENDING' },
+        where: { type: 'DEPOSIT', status: { in: ['PENDING', 'PROCESSING'] } },
       }),
       // Pending withdrawals
       prisma.transaction.count({
-        where: { type: 'WITHDRAWAL', status: 'PENDING' },
+        where: { type: 'WITHDRAWAL', status: { in: ['PENDING', 'PROCESSING'] } },
       }),
       // Today's transactions
       prisma.transaction.count({
@@ -213,6 +214,10 @@ export class AdminService {
         where: { id: userId },
         data: { isBanned: true },
       }),
+      prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
       prisma.adminAuditLog.create({
         data: {
           adminId,
@@ -263,72 +268,8 @@ export class AdminService {
   // BALANCE MANAGEMENT
   // ============================================
 
-  async adjustBalance(
-    adminId: string,
-    userId: string,
-    amount: number,
-    reason: string
-  ) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { wallet: true },
-    });
-
-    if (!user) {
-      throw new AppError('Utilisateur non trouvé', 404, 'USER_NOT_FOUND');
-    }
-
-    if (!user.wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    const currentBalance = user.wallet.balance.toNumber();
-    const newBalance = currentBalance + amount;
-
-    if (newBalance < 0) {
-      throw new AppError('Le solde ne peut pas être négatif', 400, 'NEGATIVE_BALANCE');
-    }
-
-    const transactionType = amount > 0 ? 'BONUS' : 'REFUND';
-
-    await prisma.$transaction([
-      prisma.wallet.update({
-        where: { userId },
-        data: { balance: newBalance },
-      }),
-      prisma.transaction.create({
-        data: {
-          userId,
-          type: transactionType,
-          amount: Math.abs(amount),
-          balanceBefore: currentBalance,
-          balanceAfter: newBalance,
-          status: 'COMPLETED',
-          description: `[ADMIN] ${reason}`,
-          completedAt: new Date(),
-        },
-      }),
-      prisma.adminAuditLog.create({
-        data: {
-          adminId,
-          action: 'ADJUST_BALANCE',
-          targetType: 'WALLET',
-          targetId: user.wallet.id,
-          details: {
-            userId,
-            amount,
-            reason,
-            balanceBefore: currentBalance,
-            balanceAfter: newBalance,
-          },
-        },
-      }),
-    ]);
-
-    return {
-      success: true,
-      newBalance,
-    };
+  async adjustBalance(adminId: string, userId: string, amount: number, reason: string) {
+    return walletService.adjustBalance(adminId, userId, amount, reason);
   }
 
   // ============================================
@@ -338,8 +279,8 @@ export class AdminService {
   async getTransactions(params: {
     page?: number;
     limit?: number;
-    type?: string;
-    status?: string;
+    type?: TransactionType;
+    status?: TransactionStatus;
     userId?: string;
   }) {
     const page = params.page || 1;
@@ -349,11 +290,11 @@ export class AdminService {
     const where: Prisma.TransactionWhereInput = {};
 
     if (params.type) {
-      where.type = params.type as any;
+      where.type = params.type;
     }
 
     if (params.status) {
-      where.status = params.status as any;
+      where.status = params.status;
     }
 
     if (params.userId) {
@@ -399,7 +340,8 @@ export class AdminService {
   async getPendingTransactions() {
     const [deposits, withdrawals] = await Promise.all([
       prisma.transaction.findMany({
-        where: { type: 'DEPOSIT', status: 'PENDING' },
+        where: { type: 'DEPOSIT', status: { in: ['PENDING', 'PROCESSING'] } },
+        take: 100,
         orderBy: { createdAt: 'asc' },
         include: {
           user: {
@@ -413,7 +355,8 @@ export class AdminService {
         },
       }),
       prisma.transaction.findMany({
-        where: { type: 'WITHDRAWAL', status: 'PENDING' },
+        where: { type: 'WITHDRAWAL', status: { in: ['PENDING', 'PROCESSING'] } },
+        take: 100,
         orderBy: { createdAt: 'asc' },
         include: {
           user: {
@@ -445,158 +388,11 @@ export class AdminService {
   }
 
   async completeTransaction(adminId: string, transactionId: string, externalRef?: string) {
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: transactionId },
-      include: { user: { include: { wallet: true } } },
-    });
-
-    if (!transaction) {
-      throw new AppError('Transaction non trouvée', 404, 'TRANSACTION_NOT_FOUND');
-    }
-
-    if (transaction.status !== 'PENDING') {
-      throw new AppError('Transaction non en attente', 400, 'NOT_PENDING');
-    }
-
-    const wallet = transaction.user.wallet;
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    const currentBalance = wallet.balance.toNumber();
-    let newBalance: number;
-
-    if (transaction.type === 'DEPOSIT') {
-      // Add funds to wallet
-      newBalance = currentBalance + transaction.amount.toNumber();
-    } else if (transaction.type === 'WITHDRAWAL') {
-      // Withdrawal already reserved funds - just confirm
-      newBalance = currentBalance;
-    } else {
-      throw new AppError('Type de transaction non supporté', 400, 'UNSUPPORTED_TYPE');
-    }
-
-    await prisma.$transaction([
-      prisma.transaction.update({
-        where: { id: transactionId },
-        data: {
-          status: 'COMPLETED',
-          completedAt: new Date(),
-          externalRef,
-          balanceAfter: newBalance,
-        },
-      }),
-      ...(transaction.type === 'DEPOSIT'
-        ? [
-            prisma.wallet.update({
-              where: { userId: transaction.userId },
-              data: { balance: newBalance },
-            }),
-          ]
-        : []),
-      prisma.adminAuditLog.create({
-        data: {
-          adminId,
-          action: 'COMPLETE_TRANSACTION',
-          targetType: 'TRANSACTION',
-          targetId: transactionId,
-          details: {
-            type: transaction.type,
-            amount: transaction.amount.toNumber(),
-            userId: transaction.userId,
-            externalRef,
-          },
-        },
-      }),
-    ]);
-
-    return { success: true, newBalance };
+    return walletService.settlePayment(transactionId, adminId, 'COMPLETED', externalRef);
   }
 
   async failTransaction(adminId: string, transactionId: string, reason: string) {
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: transactionId },
-      include: { user: { include: { wallet: true } } },
-    });
-
-    if (!transaction) {
-      throw new AppError('Transaction non trouvée', 404, 'TRANSACTION_NOT_FOUND');
-    }
-
-    if (transaction.status !== 'PENDING') {
-      throw new AppError('Transaction non en attente', 400, 'NOT_PENDING');
-    }
-
-    const wallet = transaction.user.wallet;
-    if (!wallet) {
-      throw new AppError('Portefeuille non trouvé', 404, 'WALLET_NOT_FOUND');
-    }
-
-    // For failed withdrawal, refund the frozen amount
-    if (transaction.type === 'WITHDRAWAL') {
-      const currentBalance = wallet.balance.toNumber();
-      const frozenBalance = wallet.frozenBalance.toNumber();
-      const amount = transaction.amount.toNumber();
-
-      await prisma.$transaction([
-        prisma.transaction.update({
-          where: { id: transactionId },
-          data: {
-            status: 'FAILED',
-            description: `${transaction.description || ''} [ECHEC: ${reason}]`,
-          },
-        }),
-        prisma.wallet.update({
-          where: { userId: transaction.userId },
-          data: {
-            balance: currentBalance + amount,
-            frozenBalance: Math.max(0, frozenBalance - amount),
-          },
-        }),
-        prisma.adminAuditLog.create({
-          data: {
-            adminId,
-            action: 'FAIL_TRANSACTION',
-            targetType: 'TRANSACTION',
-            targetId: transactionId,
-            details: {
-              type: transaction.type,
-              amount: amount,
-              userId: transaction.userId,
-              reason,
-              refunded: true,
-            },
-          },
-        }),
-      ]);
-    } else {
-      // For failed deposit, just mark as failed
-      await prisma.$transaction([
-        prisma.transaction.update({
-          where: { id: transactionId },
-          data: {
-            status: 'FAILED',
-            description: `${transaction.description || ''} [ECHEC: ${reason}]`,
-          },
-        }),
-        prisma.adminAuditLog.create({
-          data: {
-            adminId,
-            action: 'FAIL_TRANSACTION',
-            targetType: 'TRANSACTION',
-            targetId: transactionId,
-            details: {
-              type: transaction.type,
-              amount: transaction.amount.toNumber(),
-              userId: transaction.userId,
-              reason,
-            },
-          },
-        }),
-      ]);
-    }
-
-    return { success: true };
+    return walletService.settlePayment(transactionId, adminId, 'FAILED', undefined, reason);
   }
 
   // ============================================
