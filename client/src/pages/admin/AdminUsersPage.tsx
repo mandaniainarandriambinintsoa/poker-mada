@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { adminApi, AdminUser, Pagination } from '../../services/adminApi';
@@ -17,31 +17,34 @@ export default function AdminUsersPage() {
   const [adjustReason, setAdjustReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  useEffect(() => {
-    loadUsers();
-  }, [filter]);
+  const loadUsers = useCallback(
+    async (page = 1, searchTerm = '') => {
+      try {
+        setLoading(true);
+        const data = await adminApi.getUsers({
+          page,
+          limit: 20,
+          search: searchTerm || undefined,
+          filter,
+        });
+        setUsers(data.users);
+        setPagination(data.pagination);
+      } catch (err) {
+        setError(getErrorMessage(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [filter],
+  );
 
-  const loadUsers = async (page = 1) => {
-    try {
-      setLoading(true);
-      const data = await adminApi.getUsers({
-        page,
-        limit: 20,
-        search: search || undefined,
-        filter,
-      });
-      setUsers(data.users);
-      setPagination(data.pagination);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    loadUsers(1);
+    void loadUsers(1, search);
   };
 
   const handleBan = async (userId: string) => {
@@ -50,7 +53,7 @@ export default function AdminUsersPage() {
     try {
       setActionLoading(true);
       await adminApi.banUser(userId, 'Banni par admin');
-      loadUsers(pagination?.page || 1);
+      void loadUsers(pagination?.page || 1, search);
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -62,7 +65,7 @@ export default function AdminUsersPage() {
     try {
       setActionLoading(true);
       await adminApi.unbanUser(userId);
-      loadUsers(pagination?.page || 1);
+      void loadUsers(pagination?.page || 1, search);
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -85,7 +88,7 @@ export default function AdminUsersPage() {
       setSelectedUser(null);
       setAdjustAmount('');
       setAdjustReason('');
-      loadUsers(pagination?.page || 1);
+      void loadUsers(pagination?.page || 1, search);
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -94,10 +97,12 @@ export default function AdminUsersPage() {
   };
 
   const formatMoney = (amount: number) => {
-    return new Intl.NumberFormat('fr-MG', {
-      style: 'decimal',
-      minimumFractionDigits: 0,
-    }).format(amount) + ' Ar';
+    return (
+      new Intl.NumberFormat('fr-MG', {
+        style: 'decimal',
+        minimumFractionDigits: 0,
+      }).format(amount) + ' Ar'
+    );
   };
 
   const formatDate = (date: string | null) => {
@@ -118,18 +123,13 @@ export default function AdminUsersPage() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-white">Admin Poker Mada</h1>
-            <span className="px-2 py-1 text-xs bg-yellow-600 text-white rounded">
-              {user?.role}
-            </span>
+            <span className="px-2 py-1 text-xs bg-yellow-600 text-white rounded">{user?.role}</span>
           </div>
           <div className="flex items-center gap-4">
             <Link to="/lobby" className="text-gray-400 hover:text-white text-sm">
               Retour au jeu
             </Link>
-            <button
-              onClick={logout}
-              className="text-gray-400 hover:text-white text-sm"
-            >
+            <button onClick={logout} className="text-gray-400 hover:text-white text-sm">
               Deconnexion
             </button>
           </div>
@@ -236,12 +236,24 @@ export default function AdminUsersPage() {
               <table className="w-full">
                 <thead className="bg-gray-700">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Utilisateur</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Contact</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Solde</th>
-                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">Statut</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Derniere connexion</th>
-                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">Actions</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Utilisateur
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Contact
+                    </th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                      Solde
+                    </th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
+                      Statut
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Derniere connexion
+                    </th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -327,7 +339,7 @@ export default function AdminUsersPage() {
                 {Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((page) => (
                   <button
                     key={page}
-                    onClick={() => loadUsers(page)}
+                    onClick={() => void loadUsers(page, search)}
                     className={`px-3 py-1 rounded ${
                       page === pagination.page
                         ? 'bg-yellow-600 text-white'
@@ -351,7 +363,8 @@ export default function AdminUsersPage() {
               Ajuster le solde de {selectedUser.username}
             </h3>
             <p className="text-gray-400 text-sm mb-4">
-              Solde actuel: <span className="text-green-400">{formatMoney(selectedUser.balance)}</span>
+              Solde actuel:{' '}
+              <span className="text-green-400">{formatMoney(selectedUser.balance)}</span>
             </p>
 
             <div className="space-y-4">
@@ -368,9 +381,7 @@ export default function AdminUsersPage() {
                 />
               </div>
               <div>
-                <label className="block text-gray-400 text-sm mb-1">
-                  Raison
-                </label>
+                <label className="block text-gray-400 text-sm mb-1">Raison</label>
                 <input
                   type="text"
                   value={adjustReason}

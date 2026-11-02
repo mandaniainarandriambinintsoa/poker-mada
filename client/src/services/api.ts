@@ -1,19 +1,21 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { clearAccessToken, getAccessToken, refreshAccessToken } from './session';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 export const api = axios.create({
   baseURL: API_URL,
+  timeout: 15000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
+    'X-Poker-Client': 'web',
   },
 });
 
-let refreshPromise: Promise<string> | null = null;
-
 // Intercepteur pour ajouter le token
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = localStorage.getItem('token');
+  const token = getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -26,40 +28,26 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (
+      originalRequest &&
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.match(/\/auth\/(login|register|refresh|logout|update-password)/)
+    ) {
       originalRequest._retry = true;
 
-      const refreshToken = localStorage.getItem('refreshToken');
-      if (refreshToken) {
-        try {
-          if (!refreshPromise) {
-            refreshPromise = axios
-              .post(`${API_URL}/auth/refresh`, { refreshToken })
-              .then((response) => {
-                const { token, refreshToken: newRefreshToken } = response.data;
-                localStorage.setItem('token', token);
-                localStorage.setItem('refreshToken', newRefreshToken);
-                return token as string;
-              })
-              .finally(() => {
-                refreshPromise = null;
-              });
-          }
-
-          const token = await refreshPromise;
-          originalRequest.headers.Authorization = `Bearer ${token}`;
-          return api(originalRequest);
-        } catch {
-          // Refresh token invalide, déconnecter
-          localStorage.removeItem('token');
-          localStorage.removeItem('refreshToken');
-          window.location.href = '/login';
-        }
+      try {
+        const token = await refreshAccessToken();
+        originalRequest.headers.Authorization = `Bearer ${token}`;
+        return api(originalRequest);
+      } catch {
+        clearAccessToken();
+        window.location.href = '/login';
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 // Types pour les réponses
@@ -72,7 +60,11 @@ export interface ApiError {
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as ApiError | undefined;
-    return data?.error || 'Une erreur est survenue';
+    return (
+      data?.details?.map((detail) => detail.message).join(' · ') ||
+      data?.error ||
+      'Connexion au service impossible. Réessayez.'
+    );
   }
   return 'Une erreur est survenue';
 }

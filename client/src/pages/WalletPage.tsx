@@ -223,19 +223,18 @@ export default function WalletPage() {
 }
 
 // Modal de dépôt
-function DepositModal({
-  onClose,
-  onSuccess,
-}: {
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
+function DepositModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [amount, setAmount] = useState(5000);
-  const [provider, setProvider] = useState<'ORANGE_MONEY' | 'MVOLA' | 'AIRTEL_MONEY'>('ORANGE_MONEY');
+  const [provider, setProvider] = useState<'ORANGE_MONEY' | 'MVOLA' | 'AIRTEL_MONEY'>(
+    'ORANGE_MONEY',
+  );
   const [phone, setPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [instructions, setInstructions] = useState<any>(null);
+  const [instructions, setInstructions] = useState<{
+    code: string;
+    steps?: string[];
+  } | null>(null);
 
   const handleSubmit = async () => {
     setError('');
@@ -280,7 +279,9 @@ function DepositModal({
               <p className="text-white font-mono text-lg mb-2">{instructions.code}</p>
               <ol className="text-gray-300 text-sm space-y-1">
                 {instructions.steps?.map((step: string, i: number) => (
-                  <li key={i}>{i + 1}. {step}</li>
+                  <li key={i}>
+                    {i + 1}. {step}
+                  </li>
                 ))}
               </ol>
             </div>
@@ -367,7 +368,9 @@ function WithdrawModal({
   onSuccess: () => void;
 }) {
   const [amount, setAmount] = useState(5000);
-  const [provider, setProvider] = useState<'ORANGE_MONEY' | 'MVOLA' | 'AIRTEL_MONEY'>('ORANGE_MONEY');
+  const [provider, setProvider] = useState<'ORANGE_MONEY' | 'MVOLA' | 'AIRTEL_MONEY'>(
+    'ORANGE_MONEY',
+  );
   const [phone, setPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');

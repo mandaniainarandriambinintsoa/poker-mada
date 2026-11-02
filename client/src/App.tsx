@@ -1,22 +1,22 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
+import { allowLocalRegistration } from './config/features';
 
 // Pages
-import LandingPage from './pages/LandingPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import AuthCallbackPage from './pages/AuthCallbackPage';
-import LobbyPage from './pages/LobbyPage';
-import GamePage from './pages/GamePage';
-import WalletPage from './pages/WalletPage';
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const LobbyPage = lazy(() => import('./pages/LobbyPage'));
+const GamePage = lazy(() => import('./pages/GamePage'));
+const WalletPage = lazy(() => import('./pages/WalletPage'));
 
 // Admin Pages
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminUsersPage from './pages/admin/AdminUsersPage';
-import AdminPendingPage from './pages/admin/AdminPendingPage';
-import AdminTransactionsPage from './pages/admin/AdminTransactionsPage';
+const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage'));
+const AdminUsersPage = lazy(() => import('./pages/admin/AdminUsersPage'));
+const AdminPendingPage = lazy(() => import('./pages/admin/AdminPendingPage'));
+const AdminTransactionsPage = lazy(() => import('./pages/admin/AdminTransactionsPage'));
 import { AdminRoute } from './components/admin/AdminRoute';
 
 // Route protégée
@@ -72,14 +72,14 @@ function AppRoutes() {
       <Route
         path="/register"
         element={
-          <PublicRoute>
-            <RegisterPage />
-          </PublicRoute>
+          allowLocalRegistration ? (
+            <PublicRoute>
+              <RegisterPage />
+            </PublicRoute>
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
-      />
-      <Route
-        path="/auth/callback"
-        element={<AuthCallbackPage />}
       />
 
       {/* Routes protégées */}
@@ -153,7 +153,15 @@ export default function App() {
   return (
     <AuthProvider>
       <SocketProvider>
-        <AppRoutes />
+        <Suspense
+          fallback={
+            <div className="empty-state" role="status">
+              Chargement…
+            </div>
+          }
+        >
+          <AppRoutes />
+        </Suspense>
       </SocketProvider>
     </AuthProvider>
   );

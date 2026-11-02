@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { adminApi, AdminTransaction, Pagination } from '../../services/adminApi';
@@ -13,33 +13,38 @@ export default function AdminTransactionsPage() {
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
 
-  useEffect(() => {
-    loadTransactions();
-  }, [typeFilter, statusFilter]);
+  const loadTransactions = useCallback(
+    async (page = 1) => {
+      try {
+        setLoading(true);
+        const data = await adminApi.getTransactions({
+          page,
+          limit: 30,
+          type: typeFilter || undefined,
+          status: statusFilter || undefined,
+        });
+        setTransactions(data.transactions);
+        setPagination(data.pagination);
+      } catch (err) {
+        setError(getErrorMessage(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [statusFilter, typeFilter],
+  );
 
-  const loadTransactions = async (page = 1) => {
-    try {
-      setLoading(true);
-      const data = await adminApi.getTransactions({
-        page,
-        limit: 30,
-        type: typeFilter || undefined,
-        status: statusFilter || undefined,
-      });
-      setTransactions(data.transactions);
-      setPagination(data.pagination);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    void loadTransactions();
+  }, [loadTransactions]);
 
   const formatMoney = (amount: number) => {
-    return new Intl.NumberFormat('fr-MG', {
-      style: 'decimal',
-      minimumFractionDigits: 0,
-    }).format(amount) + ' Ar';
+    return (
+      new Intl.NumberFormat('fr-MG', {
+        style: 'decimal',
+        minimumFractionDigits: 0,
+      }).format(amount) + ' Ar'
+    );
   };
 
   const formatDate = (date: string) => {
@@ -120,18 +125,13 @@ export default function AdminTransactionsPage() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-white">Admin Poker Mada</h1>
-            <span className="px-2 py-1 text-xs bg-yellow-600 text-white rounded">
-              {user?.role}
-            </span>
+            <span className="px-2 py-1 text-xs bg-yellow-600 text-white rounded">{user?.role}</span>
           </div>
           <div className="flex items-center gap-4">
             <Link to="/lobby" className="text-gray-400 hover:text-white text-sm">
               Retour au jeu
             </Link>
-            <button
-              onClick={logout}
-              className="text-gray-400 hover:text-white text-sm"
-            >
+            <button onClick={logout} className="text-gray-400 hover:text-white text-sm">
               Deconnexion
             </button>
           </div>
@@ -231,11 +231,19 @@ export default function AdminTransactionsPage() {
                 <thead className="bg-gray-700">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Date</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Joueur</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Joueur
+                    </th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Type</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Montant</th>
-                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">Statut</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Details</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                      Montant
+                    </th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
+                      Statut
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Details
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -255,8 +263,13 @@ export default function AdminTransactionsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className={`font-medium ${getTypeColor(tx.type)}`}>
-                          {tx.type === 'DEPOSIT' || tx.type === 'WIN' || tx.type === 'BONUS' || tx.type === 'REFUND' || tx.type === 'TABLE_CASH_OUT'
-                            ? '+' : '-'}
+                          {tx.type === 'DEPOSIT' ||
+                          tx.type === 'WIN' ||
+                          tx.type === 'BONUS' ||
+                          tx.type === 'REFUND' ||
+                          tx.type === 'TABLE_CASH_OUT'
+                            ? '+'
+                            : '-'}
                           {formatMoney(tx.amount)}
                         </span>
                       </td>

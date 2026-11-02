@@ -23,8 +23,8 @@ export default function RegisterPage() {
       return;
     }
 
-    if (password.length < 8) {
-      setLocalError('Le mot de passe doit contenir au moins 8 caractères');
+    if (password.length < 12) {
+      setLocalError('Le mot de passe doit contenir au moins 12 caractères');
       return;
     }
 
@@ -48,7 +48,7 @@ export default function RegisterPage() {
   const displayError = localError || error;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4 py-8">
+    <main className="auth-page min-h-screen flex items-center justify-center bg-gray-900 px-4 py-10 py-8">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-poker-gold mb-2">Poker Mada</h1>
@@ -56,9 +56,12 @@ export default function RegisterPage() {
         </div>
 
         <div className="card">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form method="post" onSubmit={handleSubmit} className="space-y-4">
             {displayError && (
-              <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
+              <div
+                role="alert"
+                className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg"
+              >
                 {displayError}
               </div>
             )}
@@ -69,14 +72,15 @@ export default function RegisterPage() {
               </label>
               <input
                 id="username"
+                autoComplete="username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="input"
                 placeholder="VotreNom"
                 required
-                minLength={3}
-                maxLength={20}
+                minLength={2}
+                maxLength={30}
               />
             </div>
 
@@ -86,6 +90,8 @@ export default function RegisterPage() {
               </label>
               <input
                 id="email"
+                autoComplete="email"
+                maxLength={254}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -101,6 +107,8 @@ export default function RegisterPage() {
               </label>
               <input
                 id="phone"
+                autoComplete="tel"
+                pattern="0(32|33|34|37|38)[0-9]{7}"
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -117,39 +125,41 @@ export default function RegisterPage() {
               </label>
               <input
                 id="password"
+                autoComplete="new-password"
+                maxLength={72}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="input"
                 placeholder="••••••••"
                 required
-                minLength={8}
+                minLength={12}
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Min. 8 caractères, 1 majuscule, 1 chiffre
-              </p>
+              <p className="text-xs text-gray-500 mt-1">Entre 12 et 72 caractères</p>
             </div>
 
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-300 mb-1">
+              <label
+                htmlFor="confirmPassword"
+                className="block text-sm font-medium text-gray-300 mb-1"
+              >
                 Confirmer le mot de passe
               </label>
               <input
                 id="confirmPassword"
+                autoComplete="new-password"
+                maxLength={72}
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="input"
                 placeholder="••••••••"
                 required
+                minLength={12}
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="btn btn-primary w-full py-3"
-            >
+            <button type="submit" disabled={isSubmitting} className="btn btn-primary w-full py-3">
               {isSubmitting ? 'Inscription...' : "S'inscrire"}
             </button>
           </form>
@@ -164,6 +174,6 @@ export default function RegisterPage() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
