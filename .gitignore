@@ -42,3 +42,5 @@ server/prisma/migrations/
 .env.production
 playwright-report/
 test-results/
+.vercel
+.env*
