@@ -11,8 +11,9 @@ RUN apk add --no-cache openssl
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Installer les dépendances
-RUN npm ci
+# Coolify injects runtime variables during the Docker build. Keep the builder
+# deterministic even when NODE_ENV=production is configured for the container.
+RUN npm ci --include=dev
 
 # Copier le code source
 COPY . .
